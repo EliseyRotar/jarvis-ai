@@ -8,6 +8,12 @@
 > the `hypr_dispatch` tool; on other desktops that tool degrades gracefully and
 > JARVIS controls things through plain shell commands instead.
 
+![JARVIS HUD](docs/img/hud.png)
+
+*The HUD: live thinking stream (left), arc-reactor voice visualizer + response +
+transcript (center), and the Agentic Task Engine progress tracker + tool calls
+(right). Switch models or shut down from the header.*
+
 ```
  Wake word ─▶  STT  ─▶  Claude Agent SDK  ─▶  Tools (bash/hypr/web/memory/...)
                           │ (OAuth via Pro)
