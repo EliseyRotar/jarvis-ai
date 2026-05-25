@@ -422,8 +422,9 @@ async def healthz() -> dict[str, Any]:
     return {
         "ok": True,
         "backend": llm._pick_backend(),
-        "claude_model": llm.DEFAULT_CLAUDE_MODEL,
+        "claude_model": llm.get_active_model(),
         "openrouter_model": llm.DEFAULT_OR_MODEL,
+        "ollama_model": llm.DEFAULT_OLLAMA_MODEL,
         "credentials": {
             "claude_oauth": has_claude,
             "openrouter": has_or,
@@ -526,7 +527,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     hub.add(ws)
     backend = llm._pick_backend()
-    active_model = llm.get_active_model() if backend == "claude" else llm.DEFAULT_OR_MODEL
+    if backend == "claude":
+        active_model = llm.get_active_model()
+    elif backend == "ollama":
+        active_model = llm.DEFAULT_OLLAMA_MODEL
+    else:
+        active_model = llm.DEFAULT_OR_MODEL
     await ws.send_text(json.dumps({"type": "ready", "model": active_model, "backend": backend}))
     try:
         while True:
