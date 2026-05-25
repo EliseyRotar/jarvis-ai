@@ -24,10 +24,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Wake-word detection via microphone
+# Wake-word detection via microphone (+ VAD auto-stop)
 wakeword = [
     "openwakeword>=0.6.0",
     "sounddevice>=0.4.6",
+    "webrtcvad>=2.0.10",
 ]
 # WhatsApp Web automation
 whatsapp = [
