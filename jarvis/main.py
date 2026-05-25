@@ -595,6 +595,79 @@ async def ws_endpoint(ws: WebSocket) -> None:
 # ──────────────────────────────────────────────────────────────────────────
 
 
+async def _capture_utterance(
+    audio_q: "asyncio.Queue[bytes]",
+    *,
+    sample_rate: int,
+    chunk: int,
+    max_seconds: float,
+    preroll: list[bytes],
+) -> bytes:
+    """Capture a spoken command after the wake word.
+
+    If webrtcvad is installed, stop as soon as the speaker finishes (after
+    JARVIS_VAD_SILENCE_MS of trailing silence) rather than always recording the
+    full window — more natural and lower latency. Falls back to a fixed
+    ``max_seconds`` window when webrtcvad is unavailable.
+
+    ``preroll`` is audio already drained from the queue before this call.
+    """
+    try:
+        import webrtcvad  # type: ignore
+    except ImportError:
+        captured = list(preroll)
+        frames_needed = int(sample_rate * max_seconds / chunk) - len(captured)
+        for _ in range(max(0, frames_needed)):
+            try:
+                captured.append(await asyncio.wait_for(audio_q.get(), timeout=1.0))
+            except asyncio.TimeoutError:
+                break
+        return b"".join(captured)
+
+    aggressiveness = max(0, min(3, int(os.environ.get("JARVIS_VAD_AGGRESSIVENESS", "2"))))
+    vad = webrtcvad.Vad(aggressiveness)
+    silence_limit_ms = int(os.environ.get("JARVIS_VAD_SILENCE_MS", "800"))
+    start_timeout_s = float(os.environ.get("JARVIS_VAD_START_TIMEOUT", "3.0"))
+    frame_ms = 30
+    frame_bytes = int(sample_rate * frame_ms / 1000) * 2  # 16-bit mono
+
+    loop = asyncio.get_running_loop()
+    hard_deadline = loop.time() + max_seconds
+    start_deadline = loop.time() + start_timeout_s
+    speech_started = False
+    trailing_silence_ms = 0
+    pending = b"".join(preroll)
+    offset = 0
+
+    while True:
+        while len(pending) - offset >= frame_bytes:
+            frame = pending[offset:offset + frame_bytes]
+            offset += frame_bytes
+            try:
+                is_speech = vad.is_speech(frame, sample_rate)
+            except Exception:
+                is_speech = True  # on error, assume speech (don't cut off)
+            if is_speech:
+                speech_started = True
+                trailing_silence_ms = 0
+            elif speech_started:
+                trailing_silence_ms += frame_ms
+
+        if speech_started and trailing_silence_ms >= silence_limit_ms:
+            break
+        if loop.time() >= hard_deadline:
+            break
+        if not speech_started and loop.time() >= start_deadline:
+            break
+
+        try:
+            pending += await asyncio.wait_for(audio_q.get(), timeout=0.5)
+        except asyncio.TimeoutError:
+            continue
+
+    return pending
+
+
 async def wake_word_loop() -> None:
     """Listen for 'Hey Jarvis' offline via openwakeword, then capture + STT + chat.
 
@@ -669,13 +742,15 @@ async def wake_word_loop() -> None:
                         captured.append(audio_q.get_nowait())
                     except asyncio.QueueEmpty:
                         break
-                frames_needed = int(sample_rate * capture_seconds / chunk) - len(captured)
-                for _ in range(max(0, frames_needed)):
-                    try:
-                        captured.append(await asyncio.wait_for(audio_q.get(), timeout=1.0))
-                    except asyncio.TimeoutError:
-                        break
-                pcm_blob = b"".join(captured)
+                # VAD-based capture: stops when the speaker finishes (or at the
+                # capture_seconds cap). Falls back to a fixed window without webrtcvad.
+                pcm_blob = await _capture_utterance(
+                    audio_q,
+                    sample_rate=sample_rate,
+                    chunk=chunk,
+                    max_seconds=capture_seconds,
+                    preroll=captured,
+                )
                 try:
                     # vad_filter=False: we know speech is present after a wake word;
                     # aggressive VAD would otherwise silently drop short utterances.
