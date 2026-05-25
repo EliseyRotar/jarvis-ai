@@ -11,6 +11,13 @@
                   WebSocket stream ─▶  Web HUD  ─▶  piper TTS  ─▶  speakers
 ```
 
+> ### ⚠️ Security
+> JARVIS is an **autonomous agent with full, unsandboxed system access** — it runs
+> arbitrary shell commands and reads/writes any file, without asking for confirmation.
+> It has **no authentication** and is meant to be reached only from `localhost`.
+> **Never expose port 8765 to the network or internet** (no `0.0.0.0`, no reverse
+> proxy, no `ngrok`). See [SECURITY.md](SECURITY.md) before running.
+
 ## Layout
 
 ```
