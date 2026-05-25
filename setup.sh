@@ -256,14 +256,19 @@ if [ "$SKIP_PROMPT" = "0" ]; then
     ask "Your name (e.g. 'John'):"; read -r USER_NAME
     ask "Your hardware (e.g. 'i7-12700, 32GB, RTX 4070'):"; read -r USER_HW
 
-    TEMPLATE=$(cat "$SCRIPT_DIR/jarvis/system_prompt.txt")
-
-    # Replace placeholders with user input
-    PERSONALIZED="${TEMPLATE//\[YOUR_NAME\]/${USER_NAME:-operator}}"
-    PERSONALIZED="${PERSONALIZED//\[YOUR_HARDWARE — e.g. \"Intel i7-12700, 32 GB RAM, RTX 4070\"\]/${USER_HW:-fill in your hardware}}"
-    PERSONALIZED="${PERSONALIZED//your operator/${USER_NAME:-your operator}\'s operator}"
-
-    printf '%s\n' "$PERSONALIZED" > "$PERSONAL_PROMPT"
+    # Robust placeholder substitution via python (handles special chars in input).
+    JARVIS_USER_NAME="$USER_NAME" JARVIS_USER_HW="$USER_HW" \
+        "$VENV/bin/python" - "$SCRIPT_DIR/jarvis/system_prompt.txt" "$PERSONAL_PROMPT" <<'PYEOF'
+import os, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+name = os.environ.get("JARVIS_USER_NAME") or "your operator"
+hw = os.environ.get("JARVIS_USER_HW") or "not specified"
+text = open(src, encoding="utf-8").read()
+text = text.replace("[YOUR_NAME]", name)
+# Replace the whole MACHINE placeholder line with the user's hardware.
+text = re.sub(r"- MACHINE: \[YOUR_HARDWARE[^\n]*", f"- MACHINE: {hw}", text)
+open(dst, "w", encoding="utf-8").write(text)
+PYEOF
     ok "Personal system prompt written to jarvis/personal info jarvis/system_prompt.txt"
 fi
 
