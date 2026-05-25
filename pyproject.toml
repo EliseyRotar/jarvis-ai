@@ -38,6 +38,14 @@ whatsapp = [
 all = [
     "jarvis-ai[wakeword,whatsapp]",
 ]
+# Development / test tooling
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 [project.urls]
 Homepage = "https://github.com/EliseyRotar/jarvis-ai"
