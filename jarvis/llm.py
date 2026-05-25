@@ -27,6 +27,7 @@ import os
 import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import aiohttp
@@ -745,6 +746,31 @@ def _make_claude_tools():
     ]
 
 
+MCP_CONFIG_PATH = Path.home() / ".jarvis" / "mcp.json"
+
+
+def _load_external_mcp_servers() -> dict[str, Any]:
+    """Load external MCP server definitions from ~/.jarvis/mcp.json.
+
+    Format matches Claude Code's .mcp.json:
+        {"mcpServers": {"github": {"command": "npx", "args": [...], "env": {...}},
+                        "weather": {"type": "sse", "url": "http://..."}}}
+    Returns {} if the file is missing or malformed.
+    """
+    if not MCP_CONFIG_PATH.exists():
+        return {}
+    try:
+        data = json.loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        log.warning("could not read %s: %s", MCP_CONFIG_PATH, exc)
+        return {}
+    servers = data.get("mcpServers") or data.get("mcp_servers") or {}
+    if not isinstance(servers, dict):
+        log.warning("mcp.json: 'mcpServers' must be an object — ignoring")
+        return {}
+    return servers
+
+
 async def _get_claude_client(system_prompt: str) -> Any:
     """Lazy-init and cache one ClaudeSDKClient for the lifetime of the process."""
     global _claude_client
@@ -764,11 +790,21 @@ async def _get_claude_client(system_prompt: str) -> Any:
             tools=_make_claude_tools(),
         )
 
+        mcp_servers: dict[str, Any] = {"jarvis_tools": server}
         allowed = [f"mcp__jarvis_tools__{n}" for n in TOOL_NAMES]
+
+        # Merge any user-defined external MCP servers (~/.jarvis/mcp.json).
+        for name, cfg in _load_external_mcp_servers().items():
+            mcp_servers[name] = cfg
+            allowed.append(f"mcp__{name}")  # permit all tools from this server
+        if len(mcp_servers) > 1:
+            log.info("loaded %d external MCP server(s): %s",
+                     len(mcp_servers) - 1,
+                     ", ".join(n for n in mcp_servers if n != "jarvis_tools"))
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
-            mcp_servers={"jarvis_tools": server},
+            mcp_servers=mcp_servers,
             allowed_tools=allowed,
             model=_active_claude_model,
             permission_mode="bypassPermissions",
