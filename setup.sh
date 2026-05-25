@@ -15,6 +15,28 @@ ask()  { echo -en "    ${C_BLUE}▶${C_OFF} $1 "; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TOTAL=7
 
+# ── distro / environment detection ──────────────────────────────────────────
+# Sets: PKG_MGR (name), PKG_INSTALL (install command prefix), DISTRO_NAME, DESKTOP_ENV
+detect_distro() {
+    DISTRO_NAME="Linux"
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        DISTRO_NAME="$(. /etc/os-release && echo "${PRETTY_NAME:-$NAME}")"
+    fi
+    if   command -v pacman  &>/dev/null; then PKG_MGR="pacman";  PKG_INSTALL="sudo pacman -S --needed"
+    elif command -v apt     &>/dev/null; then PKG_MGR="apt";     PKG_INSTALL="sudo apt install -y"
+    elif command -v dnf     &>/dev/null; then PKG_MGR="dnf";     PKG_INSTALL="sudo dnf install -y"
+    elif command -v zypper  &>/dev/null; then PKG_MGR="zypper";  PKG_INSTALL="sudo zypper install -y"
+    elif command -v apk     &>/dev/null; then PKG_MGR="apk";     PKG_INSTALL="sudo apk add"
+    else PKG_MGR="unknown"; PKG_INSTALL="<your package manager> install"
+    fi
+    DESKTOP_ENV="${XDG_CURRENT_DESKTOP:-${DESKTOP_SESSION:-unknown}}"
+    if command -v hyprctl &>/dev/null && [ "$DESKTOP_ENV" = "unknown" ]; then
+        DESKTOP_ENV="Hyprland"
+    fi
+}
+detect_distro
+
 echo -e "\n${C_BOLD}${C_CYAN}"
 echo "  ╔══════════════════════════════════════════════╗"
 echo "  ║         J . A . R . V . I . S .             ║"
@@ -34,18 +56,19 @@ check_cmd() {
     fi
 }
 
-check_cmd python3  || { err "python3 not found — install with: sudo pacman -S python"; exit 1; }
-check_cmd pip      || check_cmd pip3 || { err "pip not found"; exit 1; }
+ok "distro: $DISTRO_NAME (package manager: $PKG_MGR)"
+check_cmd python3  || { err "python3 not found — install with: $PKG_INSTALL python3"; exit 1; }
+check_cmd pip      || check_cmd pip3 || { err "pip not found — install with: $PKG_INSTALL python3-pip"; exit 1; }
 
 # Detect piper binary name (Arch uses piper-tts, others use piper)
 PIPER_BIN=""
 if   command -v piper-tts &>/dev/null; then PIPER_BIN="piper-tts"; ok "piper-tts"
 elif command -v piper     &>/dev/null; then PIPER_BIN="piper";     ok "piper"
-else warn "piper not found — TTS will be disabled. Install: sudo pacman -S piper"
+else warn "piper not found — TTS will be limited. Install via your package manager (pkg name is usually 'piper' or 'piper-tts')."
 fi
 
 if command -v npm &>/dev/null; then ok "npm (needed for claude setup-token)"
-else warn "npm not found — needed to get a Claude OAuth token. Install: sudo pacman -S nodejs npm"
+else warn "npm not found — needed to get a Claude OAuth token. Install: $PKG_INSTALL nodejs npm"
 fi
 
 if python3 -c "import openwakeword, sounddevice" 2>/dev/null; then
@@ -257,16 +280,25 @@ if [ "$SKIP_PROMPT" = "0" ]; then
     ask "Your hardware (e.g. 'i7-12700, 32GB, RTX 4070'):"; read -r USER_HW
 
     # Robust placeholder substitution via python (handles special chars in input).
+    # Software-environment placeholders are auto-filled from detected system info.
     JARVIS_USER_NAME="$USER_NAME" JARVIS_USER_HW="$USER_HW" \
+    JARVIS_DISTRO="$DISTRO_NAME" JARVIS_DE="$DESKTOP_ENV" \
+    JARVIS_SHELL="$(basename "${SHELL:-sh}")" JARVIS_PKG="$PKG_MGR" \
         "$VENV/bin/python" - "$SCRIPT_DIR/jarvis/system_prompt.txt" "$PERSONAL_PROMPT" <<'PYEOF'
 import os, re, sys
 src, dst = sys.argv[1], sys.argv[2]
-name = os.environ.get("JARVIS_USER_NAME") or "your operator"
-hw = os.environ.get("JARVIS_USER_HW") or "not specified"
+g = lambda k, d: os.environ.get(k) or d
+name = g("JARVIS_USER_NAME", "your operator")
+hw   = g("JARVIS_USER_HW", "not specified")
 text = open(src, encoding="utf-8").read()
 text = text.replace("[YOUR_NAME]", name)
-# Replace the whole MACHINE placeholder line with the user's hardware.
 text = re.sub(r"- MACHINE: \[YOUR_HARDWARE[^\n]*", f"- MACHINE: {hw}", text)
+# Auto-fill detected software-environment placeholders.
+text = re.sub(r"\[YOUR_DISTRO[^\]]*\]",     g("JARVIS_DISTRO", "Linux"),   text)
+text = re.sub(r"\[YOUR_DE_OR_WM[^\]]*\]",   g("JARVIS_DE", "unknown"),     text)
+text = re.sub(r"\[YOUR_SHELL[^\]]*\]",      g("JARVIS_SHELL", "bash"),     text)
+text = re.sub(r"\[YOUR_PKG_MGR[^\]]*\]",    g("JARVIS_PKG", "unknown"),    text)
+text = re.sub(r"\[YOUR_AUDIO[^\]]*\]",      "PipeWire / PulseAudio",       text)
 open(dst, "w", encoding="utf-8").write(text)
 PYEOF
     ok "Personal system prompt written to jarvis/personal info jarvis/system_prompt.txt"
