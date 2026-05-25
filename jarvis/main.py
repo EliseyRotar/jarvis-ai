@@ -19,6 +19,7 @@ import os
 import re
 import signal
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +81,14 @@ SYSTEM_PROMPT_PATH = _PERSONAL_PROMPT if _PERSONAL_PROMPT.exists() else ROOT / "
 HISTORY_PATH = Path.home() / ".jarvis" / "history.json"
 _MAX_HISTORY = 40  # user/assistant messages to persist across reboots
 
-app = FastAPI(title="JARVIS", version="1.0")
+@asynccontextmanager
+async def lifespan(app: "FastAPI"):
+    """Startup/shutdown lifecycle. Startup logic lives in ``_on_startup``."""
+    await _on_startup()
+    yield
+
+
+app = FastAPI(title="JARVIS", version="1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Enable gzip compression for responses (especially WebSocket messages)
@@ -682,8 +690,7 @@ async def wake_word_loop() -> None:
                 await asyncio.sleep(1.0)
 
 
-@app.on_event("startup")
-async def on_startup() -> None:
+async def _on_startup() -> None:
     backend = llm._pick_backend()
     if backend == "claude":
         log.info("JARVIS online — backend=claude (Pro), model=%s", llm.DEFAULT_CLAUDE_MODEL)
