@@ -1,0 +1,65 @@
+# ── Python ────────────────────────────────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# ── Secrets & environment ──────────────────────────────────────────────────
+.env
+*.env
+!.env.example
+*.pem
+*.key
+
+# ── Runtime / data ─────────────────────────────────────────────────────────
+# JARVIS stores all runtime data outside the repo in ~/.jarvis/
+# Never commit history, memory, or audio cache.
+*.pyc
+*.wav
+*.mp3
+*.pcm
+
+# ── Claude Code settings ───────────────────────────────────────────────────
+.claude/settings.local.json
+
+# ── Personal system prompt (keep your own version here, outside the repo) ──
+jarvis/personal info jarvis/
+
+# ── IDE & editor ───────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+
+# ── openwakeword model cache ────────────────────────────────────────────────
+openwakeword/
+*.tflite
+*.onnx
+*.onnx.json
+
+# ── faster-whisper / CTranslate2 model cache ───────────────────────────────
+# (downloaded to ~/.cache/huggingface automatically)
+models/
+*.bin
+*.safetensors
+
+# ── Logs ───────────────────────────────────────────────────────────────────
+*.log
+logs/
