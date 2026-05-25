@@ -40,6 +40,12 @@ log = logging.getLogger("jarvis.llm")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_OR_MODEL = os.environ.get("JARVIS_MODEL", "openai/gpt-oss-120b:free")
 DEFAULT_CLAUDE_MODEL = os.environ.get("JARVIS_CLAUDE_MODEL", "claude-sonnet-4-6")
+
+# Ollama — fully offline, OpenAI-compatible endpoint. Default host is local.
+OLLAMA_BASE_URL = os.environ.get("JARVIS_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+OLLAMA_CHAT_URL = OLLAMA_BASE_URL + "/v1/chat/completions"
+DEFAULT_OLLAMA_MODEL = os.environ.get("JARVIS_OLLAMA_MODEL", "llama3.1")
+
 MAX_TOOL_HOPS = 12
 
 AVAILABLE_CLAUDE_MODELS = [
@@ -489,13 +495,14 @@ class StreamParser:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# OpenRouter streaming
+# OpenAI-compatible streaming (OpenRouter + Ollama share this path)
 # ──────────────────────────────────────────────────────────────────────────
 
 
 async def _stream_completion(
     session: aiohttp.ClientSession,
-    api_key: str,
+    url: str,
+    api_key: str | None,
     model: str,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
@@ -508,17 +515,17 @@ async def _stream_completion(
         "stream": True,
         "temperature": 0.7,
     }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/EliseyRotar/jarvis-ai",
-        "X-Title": "JARVIS",
-    }
-    async with session.post(OPENROUTER_URL, headers=headers,
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        # OpenRouter wants Bearer auth + attribution headers; Ollama needs neither.
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["HTTP-Referer"] = "https://github.com/EliseyRotar/jarvis-ai"
+        headers["X-Title"] = "JARVIS"
+    async with session.post(url, headers=headers,
                             data=json.dumps(payload).encode("utf-8")) as r:
         if r.status != 200:
             err = await r.text()
-            raise RuntimeError(f"OpenRouter HTTP {r.status}: {err[:500]}")
+            raise RuntimeError(f"HTTP {r.status}: {err[:500]}")
         async for raw in r.content:
             line = raw.decode("utf-8", errors="replace").strip()
             if not line or not line.startswith("data:"):
@@ -536,19 +543,17 @@ async def _stream_completion(
             yield choices[0]
 
 
-async def _stream_chat_openrouter(
+async def _stream_chat_openai_compatible(
     messages: list[dict[str, Any]],
     on_event: EventHandler,
     *,
-    model: str | None = None,
+    url: str,
+    api_key: str | None,
+    model: str,
+    engine: str,
     max_hops: int = MAX_TOOL_HOPS,
 ) -> dict[str, Any]:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        await on_event({"type": "error", "message": "OPENROUTER_API_KEY not set"})
-        return {"final_text": "", "messages": messages}
-
-    model = model or DEFAULT_OR_MODEL
+    """Shared tool-calling loop for any OpenAI-compatible chat endpoint."""
     convo = list(messages)
     final_text_chunks: list[str] = []
 
@@ -562,7 +567,7 @@ async def _stream_chat_openrouter(
             finish_reason: str | None = None
 
             try:
-                async for choice in _stream_completion(session, api_key, model, convo, TOOL_SCHEMAS):
+                async for choice in _stream_completion(session, url, api_key, model, convo, TOOL_SCHEMAS):
                     delta = choice.get("delta") or {}
                     if "content" in delta and delta["content"]:
                         chunk = delta["content"]
@@ -644,6 +649,38 @@ async def _stream_chat_openrouter(
 
     final_text = "".join(final_text_chunks).strip()
     return {"final_text": final_text, "messages": convo}
+
+
+async def _stream_chat_openrouter(
+    messages: list[dict[str, Any]],
+    on_event: EventHandler,
+    *,
+    model: str | None = None,
+    max_hops: int = MAX_TOOL_HOPS,
+) -> dict[str, Any]:
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        await on_event({"type": "error", "message": "OPENROUTER_API_KEY not set"})
+        return {"final_text": "", "messages": messages}
+    return await _stream_chat_openai_compatible(
+        messages, on_event,
+        url=OPENROUTER_URL, api_key=api_key,
+        model=model or DEFAULT_OR_MODEL, engine="openrouter", max_hops=max_hops,
+    )
+
+
+async def _stream_chat_ollama(
+    messages: list[dict[str, Any]],
+    on_event: EventHandler,
+    *,
+    model: str | None = None,
+    max_hops: int = MAX_TOOL_HOPS,
+) -> dict[str, Any]:
+    return await _stream_chat_openai_compatible(
+        messages, on_event,
+        url=OLLAMA_CHAT_URL, api_key=None,
+        model=model or DEFAULT_OLLAMA_MODEL, engine="ollama", max_hops=max_hops,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -917,17 +954,22 @@ def _pick_backend() -> str:
     explicit = (os.environ.get("JARVIS_LLM_BACKEND") or "auto").lower()
     has_claude = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
     has_or = bool(os.environ.get("OPENROUTER_API_KEY"))
+    has_ollama = bool(os.environ.get("JARVIS_OLLAMA_MODEL") or os.environ.get("JARVIS_OLLAMA_URL"))
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     if explicit == "claude":
         return "claude"
     if explicit == "openrouter":
         return "openrouter"
+    if explicit == "ollama":
+        return "ollama"
     # auto
     if has_claude and not has_anthropic:
         return "claude"
     if has_or:
         return "openrouter"
+    if has_ollama:
+        return "ollama"
     if has_claude and has_anthropic:
         # ANTHROPIC_API_KEY would shadow the OAuth token; warn but still try Claude
         log.warning("Both CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY are set. "
@@ -969,8 +1011,12 @@ async def stream_chat(
     if backend == "openrouter":
         return await _stream_chat_openrouter(messages, on_event, model=model, max_hops=max_hops)
 
+    if backend == "ollama":
+        return await _stream_chat_ollama(messages, on_event, model=model, max_hops=max_hops)
+
     await on_event({
         "type": "error",
-        "message": "No LLM backend available. Set CLAUDE_CODE_OAUTH_TOKEN (Claude Pro) or OPENROUTER_API_KEY.",
+        "message": "No LLM backend available. Set CLAUDE_CODE_OAUTH_TOKEN (Claude Pro), "
+                   "OPENROUTER_API_KEY, or JARVIS_OLLAMA_MODEL (offline).",
     })
     return {"final_text": "", "messages": messages}
