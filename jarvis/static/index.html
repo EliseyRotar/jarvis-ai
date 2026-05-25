@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>J.A.R.V.I.S.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+
+  <header class="hud-header">
+    <div class="brand">
+      <span class="brand-mark">J.A.R.V.I.S.</span>
+      <span class="brand-sub">Just A Rather Very Intelligent System</span>
+    </div>
+    <div class="status-cluster">
+      <div class="stat" id="stat-conn"><span class="dot"></span>LINK</div>
+      <div class="stat stat-model-wrap">
+        <select id="model-select" class="model-select" title="Switch Claude model"></select>
+        <span class="model-confirm hidden" id="model-confirm">✓</span>
+      </div>
+      <div class="stat" id="stat-clock">00:00:00</div>
+      <button type="button" id="shutdown-btn" class="shutdown-btn" title="Shut down JARVIS">SHUTDOWN</button>
+    </div>
+  </header>
+
+  <main class="hud-grid">
+    <!-- LEFT — Thinking -->
+    <section class="panel panel-think" id="panel-think">
+      <div class="panel-head">
+        <h2>THINKING</h2>
+        <span class="panel-tag" id="think-state">idle</span>
+      </div>
+      <div class="panel-body think-stream" id="think-stream"></div>
+    </section>
+
+    <!-- CENTER — Response + Voice/Transcript -->
+    <section class="panel panel-center">
+      <div class="reactor">
+        <div class="reactor-ring r1"></div>
+        <div class="reactor-ring r2"></div>
+        <div class="reactor-ring r3"></div>
+        <canvas class="waveform" id="waveform" width="380" height="120"></canvas>
+        <div class="reactor-core" id="reactor-core">ONLINE</div>
+      </div>
+
+      <div class="response-block">
+        <div class="panel-head">
+          <h2>RESPONSE</h2>
+          <span class="panel-tag" id="resp-state">standby</span>
+        </div>
+        <div class="panel-body response-stream" id="response-stream"></div>
+      </div>
+
+      <div class="transcript-block">
+        <div class="panel-head">
+          <h2>TRANSCRIPT</h2>
+          <span class="panel-tag" id="transcript-state">—</span>
+        </div>
+        <div class="panel-body transcript-stream" id="transcript-stream"></div>
+        <form id="input-form" class="composer">
+          <input id="input-text" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="Speak or type a directive, sir..." />
+          <button type="submit" class="send-btn">EXEC</button>
+          <button type="button" id="mic-btn" class="mic-btn" title="Hold to record">MIC</button>
+          <button type="button" id="stop-btn" class="stop-btn" title="Abort current task">ABORT</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- RIGHT — Actions / Task tracker -->
+    <section class="panel panel-actions" id="panel-actions">
+      <div class="panel-head">
+        <h2>ACTIONS</h2>
+        <span class="panel-tag" id="actions-state">no ops</span>
+      </div>
+
+      <div class="task-tracker hidden" id="task-tracker">
+        <div class="task-head">
+          <span class="task-id" id="task-id">—</span>
+          <span class="task-elapsed" id="task-elapsed">0.0s</span>
+        </div>
+        <div class="task-goal" id="task-goal"></div>
+        <div class="progress-wrap">
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-pct" id="progress-pct">0%</div>
+        </div>
+        <ol class="task-steps" id="task-steps"></ol>
+        <div class="task-complete hidden" id="task-complete"></div>
+      </div>
+
+      <div class="panel-body actions-stream" id="actions-stream"></div>
+    </section>
+  </main>
+
+  <script src="/static/jarvis.js"></script>
+</body>
+</html>
