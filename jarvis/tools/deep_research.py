@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from . import web_search
@@ -9,7 +10,7 @@ from . import web_search
 _ANGLES = [
     "{q}",
     "{q} in depth analysis",
-    "{q} 2024 2025 latest",
+    "{q} {year} latest",
     "{q} research study guide",
 ]
 
@@ -23,7 +24,8 @@ async def research(query: str, max_sources: int = 10) -> dict[str, Any]:
     if not query.strip():
         return {"ok": False, "error": "empty query"}
 
-    angles = [a.replace("{q}", query.strip()) for a in _ANGLES]
+    year = str(datetime.now().year)
+    angles = [a.replace("{q}", query.strip()).replace("{year}", year) for a in _ANGLES]
 
     # 1. Search all angles in parallel
     search_results = await asyncio.gather(
