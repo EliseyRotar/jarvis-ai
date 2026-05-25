@@ -129,11 +129,34 @@ that `"backend": "claude"`.
 | ----------------------------------------------------------- | -------------- |
 | `CLAUDE_CODE_OAUTH_TOKEN` set, `ANTHROPIC_API_KEY` unset    | Claude Pro     |
 | Only `OPENROUTER_API_KEY` set                               | OpenRouter     |
-| Both set                                                    | Claude primary; OpenRouter fallback on failure |
-| `JARVIS_LLM_BACKEND=claude` or `=openrouter`                | Forced         |
+| Only `JARVIS_OLLAMA_MODEL` set                              | Ollama (offline) |
+| Both Claude + OpenRouter set                                | Claude primary; OpenRouter fallback on failure |
+| `JARVIS_LLM_BACKEND=claude` / `openrouter` / `ollama`       | Forced         |
 
-On Claude failure or quota exhaustion, JARVIS automatically retries the turn
-on OpenRouter (if you have a key for it).
+Priority when multiple are configured: **Claude → OpenRouter → Ollama**. On Claude
+failure or quota exhaustion, JARVIS automatically retries the turn on OpenRouter
+(if you have a key for it).
+
+### Fully offline with Ollama
+
+No subscription, no internet, no data leaving your machine:
+
+```bash
+# install from https://ollama.com, then pull a tool-capable model:
+ollama pull llama3.1          # or qwen2.5, mistral, etc.
+echo "JARVIS_OLLAMA_MODEL=llama3.1" >> ~/.jarvis/.env
+```
+
+Tool calling requires a model that supports it (llama3.1, qwen2.5, mistral…).
+Point at a remote Ollama host with `JARVIS_OLLAMA_URL=http://host:11434`.
+
+### Extra tools via external MCP servers (Claude backend)
+
+JARVIS can connect to any [Model Context Protocol](https://modelcontextprotocol.io)
+server (GitHub, filesystem, web fetch, smart home, …) on top of its built-in tools.
+Copy [`mcp.json.example`](mcp.json.example) to `~/.jarvis/mcp.json`, list your
+servers (same format as Claude Code's `.mcp.json`), and restart. Tools from each
+server become available to JARVIS automatically.
 
 ## Cost notes — Claude Pro programmatic credits
 
@@ -155,9 +178,11 @@ keeps the lights on.
 | --------------------------- | ------------------------------------------------------ | ----- |
 | `CLAUDE_CODE_OAUTH_TOKEN`   | *(get from `claude setup-token`)*                       | Claude Pro auth |
 | `JARVIS_CLAUDE_MODEL`       | `claude-sonnet-4-6`                                    | Any Claude model your subscription allows |
-| `JARVIS_LLM_BACKEND`        | `auto`                                                 | `claude` / `openrouter` / `auto` |
+| `JARVIS_LLM_BACKEND`        | `auto`                                                 | `claude` / `openrouter` / `ollama` / `auto` |
 | `OPENROUTER_API_KEY`        | unset                                                  | Optional fallback |
 | `JARVIS_MODEL`              | `openai/gpt-oss-120b:free`                             | OpenRouter model id |
+| `JARVIS_OLLAMA_MODEL`       | unset                                                  | Set to activate offline Ollama (e.g. `llama3.1`) |
+| `JARVIS_OLLAMA_URL`         | `http://localhost:11434`                               | Ollama host |
 | `ANTHROPIC_API_KEY`         | **unset**                                              | If set, shadows OAuth — avoid |
 | `JARVIS_WHISPER_MODEL`      | `base.en`                                              | `tiny.en`, `base.en`, `small.en`, ... |
 | `JARVIS_WHISPER_DEVICE`     | `cpu`                                                  | `cuda` if available |
