@@ -1,8 +1,12 @@
 # J.A.R.V.I.S.
 
 > Just A Rather Very Intelligent System — a local, voice-driven AI operator for
-> Arch Linux + Hyprland. Backed by your **Claude Pro** subscription (or
-> OpenRouter as fallback).
+> Linux. Backed by your **Claude Pro** subscription, **OpenRouter**, or a
+> fully-offline **Ollama** model.
+>
+> Runs on **any Linux distro**. Hyprland gets deep window-manager integration via
+> the `hypr_dispatch` tool; on other desktops that tool degrades gracefully and
+> JARVIS controls things through plain shell commands instead.
 
 ```
  Wake word ─▶  STT  ─▶  Claude Agent SDK  ─▶  Tools (bash/hypr/web/memory/...)
@@ -32,15 +36,34 @@ jarvis/
 └── system_prompt.txt
 ```
 
-## Setup
+## Quick start
+
+```bash
+git clone https://github.com/EliseyRotar/jarvis-ai && cd jarvis-ai
+./setup.sh        # detects your distro, installs deps, prompts for token + settings
+./run_optimized.sh
+```
+
+`setup.sh` is interactive and idempotent — it detects your package manager and
+desktop, creates the venv, asks for your Claude/OpenRouter token, lets you pick a
+model + STT size, downloads piper voices, and generates a personalized system
+prompt. The manual steps below are for when you'd rather configure things yourself.
+
+## Manual setup
 
 ### 1 — System packages
 
-```bash
-sudo pacman -S --needed python python-pip nodejs npm piper alsa-utils
-# (optional) pipewire-pulse so paplay works:
-sudo pacman -S --needed pipewire-pulse
-```
+| Distro | Command |
+|--------|---------|
+| Arch | `sudo pacman -S --needed python python-pip nodejs npm piper alsa-utils pipewire-pulse` |
+| Debian/Ubuntu | `sudo apt install -y python3 python3-venv python3-pip nodejs npm pulseaudio-utils` |
+| Fedora | `sudo dnf install -y python3 python3-pip nodejs npm pulseaudio-utils` |
+| openSUSE | `sudo zypper install -y python3 python3-pip nodejs npm pulseaudio-utils` |
+
+> `piper` may be packaged as `piper` or `piper-tts` depending on your distro; if it
+> isn't in your repos, grab a release from
+> [github.com/rhasspy/piper](https://github.com/rhasspy/piper/releases). JARVIS
+> auto-detects either binary name.
 
 ### 2 — Install Claude Code CLI (auth gateway for Pro subscription)
 
