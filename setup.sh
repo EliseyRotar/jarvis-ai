@@ -73,10 +73,12 @@ fi
 
 if python3 -c "import openwakeword, sounddevice" 2>/dev/null; then
     ok "openwakeword + sounddevice (wake word available)"
+    python3 -c "import webrtcvad" 2>/dev/null && ok "webrtcvad (VAD auto-stop available)" \
+        || warn "webrtcvad not installed — capture uses a fixed window (pip install webrtcvad for auto-stop)"
     HAS_WAKEWORD=1
 else
     warn "openwakeword / sounddevice not installed — wake word disabled"
-    warn "  To enable: pip install openwakeword sounddevice  (in the venv)"
+    warn "  To enable: pip install openwakeword sounddevice webrtcvad  (in the venv)"
     HAS_WAKEWORD=0
 fi
 
