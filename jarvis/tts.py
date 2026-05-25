@@ -103,7 +103,18 @@ async def cancel_speaking() -> None:
 
 # ── Configuration ─────────────────────────────────────────────────────────
 
-PIPER_BIN      = os.environ.get("JARVIS_PIPER_BIN", "piper")
+def _detect_piper_bin() -> str:
+    """Find the piper binary. Arch packages it as 'piper-tts', others as 'piper'."""
+    explicit = os.environ.get("JARVIS_PIPER_BIN")
+    if explicit:
+        return explicit
+    for candidate in ("piper-tts", "piper"):
+        if shutil.which(candidate):
+            return candidate
+    return "piper"  # fall back to the conventional name
+
+
+PIPER_BIN      = _detect_piper_bin()
 # en_GB-alan-medium is a male British voice — correct for JARVIS.
 # en_US-lessac-high is female and must NOT be used as the default.
 PIPER_MODEL_EN = os.environ.get(
