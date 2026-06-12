@@ -158,8 +158,18 @@ function send(obj) {
 }
 
 // ── DOM helpers ────────────────────────────────────────────────────────
+// Smart auto-scroll: only stick to the bottom if the user is already near it,
+// so reading earlier text mid-stream isn't constantly yanked away.
+const _stick = new WeakMap();
+function _nearBottom(node) {
+  return node.scrollHeight - node.scrollTop - node.clientHeight < 120;
+}
 function autoscroll(node) {
-  node.scrollTop = node.scrollHeight;
+  if (!_stick.has(node)) {
+    _stick.set(node, true);
+    node.addEventListener("scroll", () => _stick.set(node, _nearBottom(node)));
+  }
+  if (_stick.get(node)) node.scrollTop = node.scrollHeight;
 }
 function ensureCursor(parent, cls) {
   let cur = parent.querySelector("." + cls);
@@ -348,6 +358,80 @@ function escapeHtml(s) {
   })[c]);
 }
 
+// ── minimal markdown renderer (dependency-free) ────────────────────────
+// Extracts code blocks first so their contents aren't mangled, escapes
+// everything, then applies inline + block formatting.
+function renderMarkdown(src) {
+  const blocks = [];
+  let s = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const i = blocks.length;
+    blocks.push(
+      '<pre class="md-code"><button class="md-copy" title="Copy">copy</button><code>' +
+      escapeHtml(code.replace(/\n$/, "")) + "</code></pre>"
+    );
+    return "B" + i + "";
+  });
+  s = escapeHtml(s);
+  // inline code
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => "<code>" + c + "</code>");
+  // bold / italic / strike
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  s = s.replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  // links
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // headings
+  s = s.replace(/^######\s+(.+)$/gm, "<h6>$1</h6>")
+       .replace(/^#####\s+(.+)$/gm, "<h5>$1</h5>")
+       .replace(/^####\s+(.+)$/gm, "<h4>$1</h4>")
+       .replace(/^###\s+(.+)$/gm, "<h3>$1</h3>")
+       .replace(/^##\s+(.+)$/gm, "<h2>$1</h2>")
+       .replace(/^#\s+(.+)$/gm, "<h1>$1</h1>");
+  // unordered lists
+  s = s.replace(/(?:^[-*]\s+.+\n?)+/gm, (m) => {
+    const items = m.trim().split(/\n/).map((l) => "<li>" + l.replace(/^[-*]\s+/, "") + "</li>").join("");
+    return "<ul>" + items + "</ul>";
+  });
+  // paragraphs / line breaks
+  s = s.replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>");
+  s = "<p>" + s + "</p>";
+  // restore code blocks
+  s = s.replace(/B(\d+)/g, (_, i) => blocks[Number(i)]);
+  return s;
+}
+
+function setMarkdown(node, src) {
+  node.innerHTML = renderMarkdown(src);
+  node.querySelectorAll(".md-copy").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const code = btn.parentElement.querySelector("code");
+      navigator.clipboard.writeText(code ? code.textContent : "").then(() => {
+        btn.textContent = "copied"; setTimeout(() => (btn.textContent = "copy"), 1500);
+      });
+    });
+  });
+}
+
+// ── toast notifications ────────────────────────────────────────────────
+function toast(message, kind = "info", ms = 3800) {
+  let host = document.getElementById("toasts");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toasts";
+    document.body.appendChild(host);
+  }
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = message;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, ms);
+}
+
 // ── streaming text into thinking / response ────────────────────────────
 function startThinkLive() {
   els.thinkState.textContent = "live";
@@ -364,18 +448,47 @@ function endThinkLive() {
 }
 function appendThink(text) { appendText(els.thinkStream, "think-cursor", text); }
 
+let _respBuffer = "";   // raw text of the current response, for markdown pass
 function startRespLive() {
   els.respState.textContent = "streaming";
   els.respState.classList.add("live");
+  _respBuffer = "";
+  // live container for plain-text streaming (fast); markdown is applied at end
+  let live = els.responseStream.querySelector(".resp-live");
+  if (!live) {
+    live = document.createElement("span");
+    live.className = "resp-live";
+    els.responseStream.appendChild(live);
+  }
   ensureCursor(els.responseStream, "resp-cursor");
 }
 function endRespLive() {
   const cur = els.responseStream.querySelector(".resp-cursor");
   if (cur) cur.remove();
+  // Replace the plain-text live span with a rendered-markdown block.
+  const live = els.responseStream.querySelector(".resp-live");
+  if (live && _respBuffer.trim()) {
+    const rendered = document.createElement("div");
+    rendered.className = "resp-md";
+    setMarkdown(rendered, _respBuffer);
+    live.replaceWith(rendered);
+  } else if (live) {
+    live.remove();
+  }
+  _respBuffer = "";
   els.respState.textContent = "ready";
   els.respState.classList.remove("live");
 }
-function appendResp(text) { appendText(els.responseStream, "resp-cursor", text); }
+function appendResp(text) {
+  _respBuffer += text;
+  const live = els.responseStream.querySelector(".resp-live");
+  if (live) {
+    live.textContent += text;
+    autoscroll(els.responseStream);
+  } else {
+    appendText(els.responseStream, "resp-cursor", text);
+  }
+}
 
 // ── master message handler ─────────────────────────────────────────────
 function handleMessage(msg) {
@@ -392,6 +505,7 @@ function handleMessage(msg) {
         if (opt.value === msg.model) { opt.selected = true; break; }
       }
       flashConfirm();
+      toast("Model → " + (MODEL_LABELS[msg.model] || msg.model), "ok");
       break;
     case "wake":
       els.reactorCore.textContent = "WAKE";
@@ -415,6 +529,7 @@ function handleMessage(msg) {
     case "turn_end":
       els.reactorCore.textContent = "DONE";
       setStopActive(false);
+      endRespLive();  // finalize: render the accumulated response as markdown
       break;
     case "stopped":
       endRespLive(); endThinkLive();
@@ -422,6 +537,7 @@ function handleMessage(msg) {
       els.reactorCore.textContent = "HALT";
       wfTarget = 0.05;
       setStopActive(false);
+      toast("Turn aborted", "warn");
       setTimeout(() => { if (els.reactorCore.textContent === "HALT") els.reactorCore.textContent = "ONLINE"; }, 1500);
       break;
     case "speaking":
@@ -457,11 +573,13 @@ function handleMessage(msg) {
       shutdownBtn.textContent = "OFFLINE";
       shutdownBtn.classList.add("offline");
       els.statConn.classList.remove("linked");
+      toast("JARVIS is shutting down", "err", 6000);
       break;
     case "error":
       console.error("JARVIS error:", msg.message);
       els.respState.textContent = "ERR";
       els.respState.classList.add("err");
+      toast(msg.message || "An error occurred", "err", 6000);
       break;
   }
 }
