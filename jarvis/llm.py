@@ -255,6 +255,63 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "schedule_add",
+            "description": "Schedule a prompt to run automatically later. kind='daily' with "
+                           "spec='06:30' runs every day at 6:30am (e.g. a morning brief); "
+                           "kind='interval' with spec='1800' runs every 30 min; kind='once' with "
+                           "spec an ISO timestamp runs a single time. The prompt runs exactly as if "
+                           "the operator typed it.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["once", "interval", "daily"]},
+                    "spec": {"type": "string", "description": "HH:MM (daily) | seconds (interval) | ISO ts (once)"},
+                },
+                "required": ["prompt", "kind", "spec"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_list",
+            "description": "List all scheduled jobs and their next run times.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_cancel",
+            "description": "Cancel a scheduled job by its numeric id.",
+            "parameters": {
+                "type": "object",
+                "properties": {"id": {"type": "integer"}},
+                "required": ["id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "audit_log",
+            "description": "Review JARVIS's own security audit log of recent tool calls "
+                           "(timestamps, tools used, failures, any secrets detected). Use when "
+                           "the operator asks what you've done or whether anything sensitive was touched.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "How many recent entries (default 30)."},
+                    "tool": {"type": "string", "description": "Optional: filter to one tool name."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "tts_speak",
             "description": "Speak text aloud through piper. Backend strips <jarvis:*> tags first.",
             "parameters": {
@@ -318,7 +375,19 @@ TOOL_NAMES = [s["function"]["name"] for s in TOOL_SCHEMAS]
 
 
 async def dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Route a tool call to the right implementation."""
+    """Route a tool call to the right implementation, recording it to the audit log."""
+    import time as _time
+    _t0 = _time.monotonic()
+    result = await _dispatch_tool_inner(name, args)
+    try:
+        from .tools import audit
+        audit.record(name, args, result, duration=_time.monotonic() - _t0)
+    except Exception as exc:  # auditing must never break a tool call
+        log.debug("audit record failed: %s", exc)
+    return result
+
+
+async def _dispatch_tool_inner(name: str, args: dict[str, Any]) -> dict[str, Any]:
     try:
         if name == "bash_exec":
             return await bash_exec.run(args.get("command", ""), cwd=args.get("cwd"))
@@ -342,6 +411,19 @@ async def dispatch_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             return await memory.list_memories(limit=int(args.get("limit", 20)))
         if name == "memory_delete":
             return await memory.delete(args["key"])
+        if name == "audit_log":
+            from .tools import audit
+            return {"ok": True, "summary": audit.summary(),
+                    "entries": audit.recent(limit=int(args.get("limit", 30)), tool=args.get("tool"))}
+        if name == "schedule_add":
+            from .tools import scheduler
+            return scheduler.add(args.get("name", ""), args["prompt"], args["kind"], args["spec"])
+        if name == "schedule_list":
+            from .tools import scheduler
+            return scheduler.list_jobs()
+        if name == "schedule_cancel":
+            from .tools import scheduler
+            return scheduler.cancel(int(args["id"]))
         if name == "deep_research":
             return await deep_research.research(args["query"], max_sources=int(args.get("max_sources", 10)))
         if name == "tts_speak":
@@ -728,12 +810,18 @@ def _make_claude_tools():
               {"url": str}),
         _wrap("memory_save", "Persist a memory entry by key with optional tags.",
               {"key": str, "value": str, "tags": list}),
-        _wrap("memory_recall", "Fuzzy-recall stored memories matching a query.",
+        _wrap("memory_recall", "Full-text recall of stored memories matching a query (BM25-ranked).",
               {"query": str}),
         _wrap("memory_list", "List all stored memories, most recent first.",
               {"limit": int}),
         _wrap("memory_delete", "Delete a stored memory by exact key.",
               {"key": str}),
+        _wrap("audit_log", "Review the security audit log of recent tool calls.",
+              {"limit": int, "tool": str}),
+        _wrap("schedule_add", "Schedule a prompt to run later (daily/interval/once).",
+              {"name": str, "prompt": str, "kind": str, "spec": str}),
+        _wrap("schedule_list", "List scheduled jobs and next run times.", {}),
+        _wrap("schedule_cancel", "Cancel a scheduled job by id.", {"id": int}),
         _wrap("deep_research", "Deep multi-source web research across multiple query angles.",
               {"query": str, "max_sources": int}),
         _wrap("tts_speak", "Speak text aloud through piper (tags stripped).",
