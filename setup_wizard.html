@@ -72,6 +72,7 @@
     <div id="step-dot-2"></div>
     <div id="step-dot-3"></div>
     <div id="step-dot-4"></div>
+    <div id="step-dot-5"></div>
   </div>
 
   <!-- Step 0: install -->
@@ -179,8 +180,201 @@
     </div>
   </section>
 
-  <!-- Step 4: Finish -->
+  <!-- Step 4: Integrations -->
   <section id="step-4">
+    <p>Optional integrations — connect JARVIS to apps you already use via MCP.
+       Pick any number; you can add API keys/tokens later by editing
+       <code>~/.jarvis/mcp.json</code>.</p>
+
+    <label class="check-row"><input type="checkbox" id="mcp_playwright">
+      <span class="title">Browser control (Playwright)</span>
+      <span class="desc">Lets JARVIS drive a real browser — fill forms, click, scrape pages. No key needed.</span>
+    </label>
+
+    <label class="check-row"><input type="checkbox" id="mcp_gmail">
+      <span class="title">Gmail</span>
+      <span class="desc">Read, search, and send email. First run opens a browser to authorize via OAuth.</span>
+    </label>
+    <p style="margin:0 0 0 26px; font-size:12px; color:var(--muted)">
+      Nothing to configure here — the first time JARVIS uses Gmail, a browser tab opens
+      asking you to sign in with Google and click "Allow".
+    </p>
+
+    <label class="check-row"><input type="checkbox" id="mcp_elevenlabs">
+      <span class="title">ElevenLabs voice</span>
+      <span class="desc">High-quality cloned/custom voices for TTS, voice agents, transcription.</span>
+    </label>
+    <div id="elevenlabs-fields" style="margin-left:26px; display:none">
+      <label>ElevenLabs API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="elevenlabs_key" placeholder="el_...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://elevenlabs.io/app/settings/api-keys">Get key ↗</button>
+      </div>
+      <p style="margin:6px 0 0; font-size:12px; color:var(--muted)">
+        Opens elevenlabs.io (free tier available) — sign in/up, copy the API key, paste it here.
+      </p>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_revenuecat">
+      <span class="title">RevenueCat (revenue tracking)</span>
+      <span class="desc">Subscription metrics — MRR, active trials, products, entitlements.</span>
+    </label>
+    <div id="revenuecat-fields" style="margin-left:26px; display:none">
+      <label>RevenueCat API v2 secret key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="revenuecat_key" placeholder="sk_...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://app.revenuecat.com/settings/api-keys">Get key ↗</button>
+      </div>
+      <p style="margin:6px 0 0; font-size:12px; color:var(--muted)">
+        Opens RevenueCat's API keys page — sign in, create a V2 secret key, paste it here.
+      </p>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_postiz">
+      <span class="title">Postiz (auto-post content)</span>
+      <span class="desc">Self-hosted social scheduler — create/schedule posts across platforms.</span>
+    </label>
+    <div id="postiz-fields" style="margin-left:26px; display:none">
+      <label>Postiz URL</label>
+      <input type="text" id="postiz_url" placeholder="http://localhost:5000">
+      <label>Postiz API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="postiz_key" placeholder="...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url-from="postiz_url" data-url-suffix="/settings">Open Postiz ↗</button>
+      </div>
+      <p style="margin:6px 0 0; font-size:12px; color:var(--muted)">
+        Postiz is self-hosted (one-command Docker install — see
+        <a href="https://docs.postiz.com/installation" target="_blank">guide</a>). Enter its
+        URL, then click to open its settings and copy your API key.
+      </p>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_meta_ads">
+      <span class="title">Meta Ads</span>
+      <span class="desc">Read/run Facebook &amp; Instagram ads, performance reports. Authorize via Meta on first use.</span>
+    </label>
+    <p style="margin:0 0 0 26px; font-size:12px; color:var(--muted)">
+      Nothing to configure here — the first time JARVIS uses it, you'll get a link to
+      log in with Facebook and grant access to your ad accounts.
+    </p>
+
+    <p style="margin-top:20px; color:var(--accent); font-size:13px; letter-spacing:1px">MORE CONNECTORS</p>
+
+    <label class="check-row"><input type="checkbox" id="mcp_gcal">
+      <span class="title">Google Calendar</span>
+      <span class="desc">Create/move events, check your schedule by voice. Authorizes via Google on first use.</span>
+    </label>
+
+    <label class="check-row"><input type="checkbox" id="mcp_homeassistant">
+      <span class="title">Home Assistant (smart home)</span>
+      <span class="desc">Control lights, climate, locks, scenes — the classic "JARVIS, lights off."</span>
+    </label>
+    <div id="homeassistant-fields" style="margin-left:26px; display:none">
+      <label>Home Assistant URL</label>
+      <input type="text" id="homeassistant_url" placeholder="http://homeassistant.local:8123">
+      <label>Long-lived access token</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="homeassistant_token" placeholder="...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url-from="homeassistant_url" data-url-suffix="/profile/security">Get token ↗</button>
+      </div>
+      <p style="margin:6px 0 0; font-size:12px; color:var(--muted)">
+        Enable the "MCP Server" integration in Home Assistant, then create a long-lived token
+        under your profile → Security.
+      </p>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_exa">
+      <span class="title">Exa (semantic web search)</span>
+      <span class="desc">Neural search + full-page fetch — far better than keyword search for research.</span>
+    </label>
+    <div id="exa-fields" style="margin-left:26px; display:none">
+      <label>Exa API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="exa_key" placeholder="...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://dashboard.exa.ai/api-keys">Get key ↗</button>
+      </div>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_github">
+      <span class="title">GitHub</span>
+      <span class="desc">Manage repos, issues, PRs, CI — pairs with JARVIS's shell/file tools.</span>
+    </label>
+    <div id="github-fields" style="margin-left:26px; display:none">
+      <label>GitHub personal access token</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="github_token" placeholder="ghp_...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://github.com/settings/tokens/new?description=JARVIS&scopes=repo,workflow">Create token ↗</button>
+      </div>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_notion">
+      <span class="title">Notion</span>
+      <span class="desc">Read/write your notes, docs, and databases — JARVIS's long-form knowledge base.</span>
+    </label>
+    <div id="notion-fields" style="margin-left:26px; display:none">
+      <label>Notion integration token</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="notion_token" placeholder="ntn_...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://www.notion.so/my-integrations">Get token ↗</button>
+      </div>
+      <p style="margin:6px 0 0; font-size:12px; color:var(--muted)">
+        Create an internal integration, copy its secret, then share the pages you want JARVIS to see with it.
+      </p>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_todoist">
+      <span class="title">Todoist</span>
+      <span class="desc">Natural-language task capture — "add milk to my list," "what's due today." Authorizes via OAuth.</span>
+    </label>
+
+    <label class="check-row"><input type="checkbox" id="mcp_mem0">
+      <span class="title">mem0 (long-term memory)</span>
+      <span class="desc">Persistent, semantically-searchable memory across sessions in the cloud.</span>
+    </label>
+    <div id="mem0-fields" style="margin-left:26px; display:none">
+      <label>mem0 API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="mem0_key" placeholder="m0-...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://app.mem0.ai/dashboard/api-keys">Get key ↗</button>
+      </div>
+    </div>
+
+    <label class="check-row"><input type="checkbox" id="mcp_stripe">
+      <span class="title">Stripe</span>
+      <span class="desc">Check payments, subscriptions, invoices, refunds — pairs with RevenueCat.</span>
+    </label>
+    <div id="stripe-fields" style="margin-left:26px; display:none">
+      <label>Stripe restricted API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="stripe_key" placeholder="rk_...">
+        <button type="button" class="btn secondary open-link" style="flex:0 0 auto"
+                data-url="https://dashboard.stripe.com/apikeys">Get key ↗</button>
+      </div>
+    </div>
+
+    <p style="margin-top:18px">Business knowledge base (optional)</p>
+    <label>Folder of markdown notes JARVIS should read for context (FAQs, tone of voice, policies):</label>
+    <div class="row2" style="align-items:center">
+      <input type="text" id="kb_path" placeholder="C:\Users\you\Documents\jarvis-kb" readonly>
+      <button type="button" class="btn secondary" id="btn-pick-kb" style="flex:0 0 auto">Choose folder…</button>
+    </div>
+
+    <div class="actions">
+      <button class="btn secondary" id="btn-step4-back">← Back</button>
+      <button class="btn" id="btn-step4-next">Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 5: Finish -->
+  <section id="step-5">
     <p>Saving configuration and downloading any selected voices...</p>
     <p id="finish-msg" style="display:none"><span class="pill ok">Ready</span> JARVIS is starting — this page will redirect automatically.</p>
     <div class="actions">
@@ -191,8 +385,8 @@
 </div>
 
 <script>
-const dots = [0,1,2,3,4].map(i => document.getElementById('step-dot-'+i));
-const sections = [0,1,2,3,4].map(i => document.getElementById('step-'+i));
+const dots = [0,1,2,3,4,5].map(i => document.getElementById('step-dot-'+i));
+const sections = [0,1,2,3,4,5].map(i => document.getElementById('step-'+i));
 let current = 0;
 
 function goTo(n) {
@@ -315,7 +509,35 @@ document.getElementById('btn-step2-next').onclick = () => goTo(3);
 document.getElementById('btn-step3-back').onclick = () => goTo(2);
 document.getElementById('btn-step3-next').onclick = () => goTo(4);
 
-// ── Step 4: save + launch ──
+// ── Step 4: integrations ──
+[['mcp_elevenlabs','elevenlabs-fields'], ['mcp_revenuecat','revenuecat-fields'], ['mcp_postiz','postiz-fields'],
+ ['mcp_homeassistant','homeassistant-fields'], ['mcp_exa','exa-fields'], ['mcp_github','github-fields'],
+ ['mcp_notion','notion-fields'], ['mcp_mem0','mem0-fields'], ['mcp_stripe','stripe-fields']]
+  .forEach(([cb, fields]) => {
+    document.getElementById(cb).onchange = e => {
+      document.getElementById(fields).style.display = e.target.checked ? 'block' : 'none';
+    };
+  });
+document.querySelectorAll('.open-link').forEach(btn => {
+  btn.onclick = () => {
+    let url = btn.dataset.url;
+    if (!url && btn.dataset.urlFrom) {
+      const base = document.getElementById(btn.dataset.urlFrom).value.trim();
+      if (!base) return;
+      url = base.replace(/\/$/, '') + (btn.dataset.urlSuffix || '');
+    }
+    if (url) fetch('/api/open', { method: 'POST', body: JSON.stringify({ url }) });
+  };
+});
+document.getElementById('btn-pick-kb').onclick = () => {
+  fetch('/api/pick_folder').then(r => r.json()).then(res => {
+    if (res.path) document.getElementById('kb_path').value = res.path;
+  });
+};
+document.getElementById('btn-step4-back').onclick = () => goTo(3);
+document.getElementById('btn-step4-next').onclick = () => goTo(5);
+
+// ── Step 5: save + launch ──
 document.getElementById('btn-launch').onclick = () => {
   const backend = document.querySelector('input[name=backend]:checked').value;
   const cfg = {
@@ -332,6 +554,32 @@ document.getElementById('btn-launch').onclick = () => {
     piper_ru: document.getElementById('piper_ru').checked,
     user_name: document.getElementById('user_name').value,
     user_hw: document.getElementById('user_hw').value,
+    mcp_playwright: document.getElementById('mcp_playwright').checked,
+    mcp_gmail: document.getElementById('mcp_gmail').checked,
+    mcp_elevenlabs: document.getElementById('mcp_elevenlabs').checked,
+    elevenlabs_key: document.getElementById('elevenlabs_key').value,
+    mcp_revenuecat: document.getElementById('mcp_revenuecat').checked,
+    revenuecat_key: document.getElementById('revenuecat_key').value,
+    mcp_postiz: document.getElementById('mcp_postiz').checked,
+    postiz_url: document.getElementById('postiz_url').value,
+    postiz_key: document.getElementById('postiz_key').value,
+    mcp_meta_ads: document.getElementById('mcp_meta_ads').checked,
+    mcp_gcal: document.getElementById('mcp_gcal').checked,
+    mcp_homeassistant: document.getElementById('mcp_homeassistant').checked,
+    homeassistant_url: document.getElementById('homeassistant_url').value,
+    homeassistant_token: document.getElementById('homeassistant_token').value,
+    mcp_exa: document.getElementById('mcp_exa').checked,
+    exa_key: document.getElementById('exa_key').value,
+    mcp_github: document.getElementById('mcp_github').checked,
+    github_token: document.getElementById('github_token').value,
+    mcp_notion: document.getElementById('mcp_notion').checked,
+    notion_token: document.getElementById('notion_token').value,
+    mcp_todoist: document.getElementById('mcp_todoist').checked,
+    mcp_mem0: document.getElementById('mcp_mem0').checked,
+    mem0_key: document.getElementById('mem0_key').value,
+    mcp_stripe: document.getElementById('mcp_stripe').checked,
+    stripe_key: document.getElementById('stripe_key').value,
+    kb_path: document.getElementById('kb_path').value,
   };
   document.getElementById('btn-launch').disabled = true;
   fetch('/api/save_config', { method: 'POST', body: JSON.stringify(cfg) })
