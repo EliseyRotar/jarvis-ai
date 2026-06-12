@@ -67,3 +67,11 @@ logs/
 # Cloned reference repo (not part of JARVIS)
 OpenJarvis/
 addons.txt
+
+# ── WhatsApp bridge (vendored from lharries/whatsapp-mcp) ───────────────────
+# Built binaries (run.sh / run.ps1 build these on first run) and runtime data
+# (session DB, message history, downloaded media, QR code) never get committed.
+whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
+whatsapp-mcp/whatsapp-bridge/whatsapp-bridge.exe
+whatsapp-mcp/whatsapp-bridge/qr.png
+whatsapp-mcp/whatsapp-bridge/store/
