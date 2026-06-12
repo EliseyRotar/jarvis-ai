@@ -39,7 +39,8 @@ async def run(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
-            env={**os.environ, "PAGER": "cat", "GIT_PAGER": "cat"},
+            env={**os.environ, "PAGER": "more" if os.name == "nt" else "cat",
+                 "GIT_PAGER": "cat" if os.name != "nt" else "more"},
         )
     except Exception as exc:
         return {"stdout": "", "stderr": f"spawn failed: {exc}", "exit_code": -1}
