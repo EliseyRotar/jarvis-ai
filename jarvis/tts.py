@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import re
 import shlex
 import shutil
 from typing import Any
+
+IS_WINDOWS = platform.system() == "Windows"
 
 
 # ── Text cleaning ─────────────────────────────────────────────────────────
@@ -114,20 +117,28 @@ def _detect_piper_bin() -> str:
     return "piper"  # fall back to the conventional name
 
 
+def _piper_data_dir() -> str:
+    if IS_WINDOWS:
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(base, "piper")
+    return os.path.expanduser("~/.local/share/piper")
+
+
 PIPER_BIN      = _detect_piper_bin()
+_PIPER_DIR     = _piper_data_dir()
 # en_GB-alan-medium is a male British voice — correct for JARVIS.
 # en_US-lessac-high is female and must NOT be used as the default.
 PIPER_MODEL_EN = os.environ.get(
     "JARVIS_PIPER_MODEL_EN",
-    os.path.expanduser("~/.local/share/piper/en_GB-alan-medium.onnx"),
+    os.path.join(_PIPER_DIR, "en_GB-alan-medium.onnx"),
 )
 PIPER_MODEL_IT = os.environ.get(
     "JARVIS_PIPER_MODEL_IT",
-    os.path.expanduser("~/.local/share/piper/it_IT-riccardo-x_low.onnx"),
+    os.path.join(_PIPER_DIR, "it_IT-riccardo-x_low.onnx"),
 )
 PIPER_MODEL_RU = os.environ.get(
     "JARVIS_PIPER_MODEL_RU",
-    os.path.expanduser("~/.local/share/piper/ru_RU-ruslan-medium.onnx"),
+    os.path.join(_PIPER_DIR, "ru_RU-ruslan-medium.onnx"),
 )
 PIPER_SPEED     = float(os.environ.get("JARVIS_PIPER_SPEED", "0.85"))
 EDGE_VOICE      = os.environ.get("JARVIS_EDGE_VOICE",    "en-GB-RyanNeural")
@@ -146,6 +157,12 @@ def _pick_edge_voice(lang: str) -> str:
 
 
 def _pick_pcm_player() -> str | None:
+    if IS_WINDOWS:
+        if shutil.which("ffplay"):
+            return "ffplay -nodisp -autoexit -loglevel quiet -f s16le -ar 22050 -ac 1 -"
+        if shutil.which("mpv"):
+            return "mpv --no-video --really-quiet --demuxer=rawaudio --demuxer-rawaudio-format=s16le --demuxer-rawaudio-rate=22050 --demuxer-rawaudio-channels=1 -"
+        return None
     if shutil.which("paplay"):
         return "paplay --raw --rate=22050 --channels=1 --format=s16le"
     if shutil.which("aplay"):
@@ -243,38 +260,44 @@ async def _speak_piper(text: str, lang: str, gen: int) -> dict[str, Any]:
 
     player_cmd = _pick_pcm_player()
     if player_cmd is None:
+        if IS_WINDOWS:
+            return {"ok": False, "error": "no PCM player found (need ffplay or mpv)"}
         return {"ok": False, "error": "no PCM player found (need paplay or aplay)"}
 
-    piper_cmd = (
-        f"{shlex.quote(PIPER_BIN)} --model {shlex.quote(model)} "
-        f"--length-scale {PIPER_SPEED} --output-raw"
-    )
-    pipeline = f"{piper_cmd} | {player_cmd}"
+    piper_args = [PIPER_BIN, "--model", model, "--length-scale", str(PIPER_SPEED), "--output-raw"]
+    player_args = shlex.split(player_cmd, posix=not IS_WINDOWS)
 
     global _current_proc
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "sh", "-c", pipeline,
+        piper_proc = await asyncio.create_subprocess_exec(
+            *piper_args,
             stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+        )
+        player_proc = await asyncio.create_subprocess_exec(
+            *player_args,
+            stdin=piper_proc.stdout,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     except Exception as exc:
         return {"ok": False, "error": f"spawn failed: {exc}"}
 
-    _current_proc = proc
-    assert proc.stdin is not None
+    _current_proc = piper_proc
+    assert piper_proc.stdin is not None
     try:
-        proc.stdin.write(text.encode("utf-8"))
-        await proc.stdin.drain()
-        proc.stdin.close()
+        piper_proc.stdin.write(text.encode("utf-8"))
+        await piper_proc.stdin.drain()
+        piper_proc.stdin.close()
     except (BrokenPipeError, ConnectionResetError):
         pass
 
-    _, err = await proc.communicate()
+    _, err = await piper_proc.communicate()
+    await player_proc.wait()
     _current_proc = None
 
-    rc = proc.returncode
+    rc = piper_proc.returncode
     if rc not in (0, -15, None):  # -15 = SIGTERM (cancelled gracefully)
         return {"ok": False, "error": f"piper exited {rc}",
                 "stderr": err.decode(errors="replace")}
