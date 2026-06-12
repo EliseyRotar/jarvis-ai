@@ -184,11 +184,30 @@ def _create_task(coro) -> asyncio.Task:
     return task
 
 
+def _memory_context_block(limit: int = 8) -> str:
+    """Read the most-recently-updated memory entries directly (no tool round trip)."""
+    try:
+        from .tools import memory
+        entries = memory.recent_sync(limit)
+    except Exception as exc:
+        log.debug("memory context load failed: %s", exc)
+        return ""
+    if not entries:
+        return ""
+    lines = []
+    for e in entries:
+        value = e.get("value")
+        if not isinstance(value, str):
+            value = json.dumps(value, ensure_ascii=False)
+        lines.append(f"- {e.get('key')}: {value}")
+    return "\n\nKNOWN CONTEXT FROM MEMORY (already loaded, do not call memory_recall again for this):\n" + "\n".join(lines)
+
+
 def _load_system_prompt() -> str:
     if SYSTEM_PROMPT_PATH.exists():
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
+        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8") + _memory_context_block()
     log.warning("system_prompt.txt not found, using fallback")
-    return "You are JARVIS, a helpful Arch Linux system assistant."
+    return "You are JARVIS, a helpful Arch Linux system assistant." + _memory_context_block()
 
 
 def _save_history() -> None:
@@ -696,8 +715,28 @@ async def wake_word_loop() -> None:
     chunk = 1280  # 80ms @ 16kHz, openwakeword's expected frame size
     loop = asyncio.get_running_loop()
 
+    # openwakeword ships with NO pretrained models until download_models() runs once.
+    # On a fresh install the models dir is empty, so Model(...) loads nothing and the
+    # loop silently never fires. Detect that and download on demand.
     try:
-        wake_model = await asyncio.to_thread(WakeModel, wakeword_models=[wake_phrase])
+        import glob
+        models_dir = os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models")
+        if not glob.glob(os.path.join(models_dir, "*.onnx")):
+            log.info("wake-word models missing — downloading openwakeword pretrained models (one-time)")
+            import openwakeword.utils  # type: ignore
+            await asyncio.to_thread(openwakeword.utils.download_models)
+    except Exception as exc:
+        log.warning("wake-word model download failed (%s)", exc)
+
+    try:
+        # Force onnx: tflite-runtime isn't available on Windows, and letting
+        # openwakeword guess emits a noisy warning before falling back anyway.
+        wake_model = await asyncio.to_thread(
+            WakeModel, wakeword_models=[wake_phrase], inference_framework="onnx"
+        )
+        if not getattr(wake_model, "models", None):
+            log.warning("wake-word model %r loaded nothing — disabling", wake_phrase)
+            return
     except Exception as exc:
         log.warning("wake-word model load failed (%s) — disabling", exc)
         return
@@ -810,3 +849,37 @@ async def _on_startup() -> None:
 
     _create_task(_prewarm_stt())
     _create_task(wake_word_loop())
+
+    # Scheduler: fire saved prompts on their schedule, streaming to the HUD.
+    async def _fire_scheduled(prompt: str) -> None:
+        log.info("scheduler firing job: %r", prompt[:60])
+        await handle_user_turn(prompt, voice=False, send=hub.broadcast)
+
+    try:
+        from .tools import scheduler
+        _create_task(scheduler.run_loop(_fire_scheduled))
+        log.info("scheduler loop started")
+    except Exception as exc:
+        log.warning("scheduler failed to start: %s", exc)
+
+    # Telegram channel: answer messages from your phone as if typed in the HUD.
+    try:
+        from .tools import channels
+        tg = channels.from_env()
+        if tg is not None:
+            async def _on_telegram(text: str, chat_id: int) -> None:
+                final = {"text": ""}
+
+                async def _capture(event: dict) -> None:
+                    await hub.broadcast(event)  # mirror to the HUD too
+                    if event.get("type") == "turn_end":
+                        final["text"] = event.get("final_text") or ""
+
+                await handle_user_turn(text, voice=False, send=_capture)
+                reply = final["text"] or "(no response)"
+                await asyncio.to_thread(tg.send, chat_id, reply)
+
+            _create_task(tg.run_loop(_on_telegram))
+            log.info("telegram channel loop started")
+    except Exception as exc:
+        log.warning("telegram channel failed to start: %s", exc)

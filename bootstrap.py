@@ -179,10 +179,23 @@ def run_install() -> None:
             return
 
         log("Installing optional extras (wake word, WhatsApp)...")
+        wakeword_ok = True
         for extra in ("wakeword", "whatsapp"):
             rc = run_streamed([str(VENV_PY), "-m", "pip", "install", "-e", f"{ROOT}[{extra}]"])
             if rc != 0:
                 log(f"  ! optional extra '{extra}' failed to install — related features will be unavailable.")
+                if extra == "wakeword":
+                    wakeword_ok = False
+
+        if wakeword_ok:
+            # openwakeword ships with NO models — fetch the pretrained set (incl. hey_jarvis)
+            # now, so the "Hey Jarvis" wake word works on first launch instead of silently
+            # doing nothing.
+            log("Downloading wake-word models (hey_jarvis)...")
+            rc = run_streamed([str(VENV_PY), "-c",
+                               "import openwakeword.utils as u; u.download_models()"])
+            if rc != 0:
+                log("  ! wake-word model download failed — it will retry on first launch.")
 
         log("Checking for piper / audio player...")
         try_install_system_packages()
@@ -280,6 +293,29 @@ def _gpu_names() -> list[str]:
     except Exception:
         pass
     return []
+
+
+def pick_folder() -> str:
+    """Open a native folder picker and return the chosen path (or "")."""
+    try:
+        if IS_WINDOWS:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Add-Type -AssemblyName System.Windows.Forms | Out-Null; "
+                 "$f = New-Object System.Windows.Forms.FolderBrowserDialog; "
+                 "if ($f.ShowDialog() -eq 'OK') { $f.SelectedPath }"],
+                capture_output=True, text=True, timeout=120,
+            )
+            return out.stdout.strip()
+        out = subprocess.run(
+            ["python3", "-c",
+             "import tkinter, tkinter.filedialog as fd; "
+             "r=tkinter.Tk(); r.withdraw(); print(fd.askdirectory() or '')"],
+            capture_output=True, text=True, timeout=120,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return ""
 
 
 def detect_hardware() -> dict:
@@ -495,8 +531,147 @@ def write_personal_prompt(cfg: dict) -> None:
     text = re.sub(r"\[YOUR_SHELL[^\]]*\]", shell, text)
     text = re.sub(r"\[YOUR_PKG_MGR[^\]]*\]", pkg, text)
     text = re.sub(r"\[YOUR_AUDIO[^\]]*\]", audio, text)
+    if cfg.get("kb_path"):
+        text += (
+            "\n\n## Knowledge base\n"
+            f"A folder of markdown notes about the operator's business/voice is at: "
+            f"{cfg['kb_path']}\n"
+            "Read files from there (file_ops/bash_exec) before answering questions "
+            "about the business, policies, or tone of voice.\n"
+        )
     PERSONAL_PROMPT.write_text(text, encoding="utf-8")
     log("Personal system prompt written.")
+
+
+MCP_CONFIG_PATH = JARVIS_DIR / "mcp.json"
+
+
+def save_mcp_config(cfg: dict) -> None:
+    """Write/merge ~/.jarvis/mcp.json based on integrations selected in the wizard."""
+    data: dict = {"mcpServers": {}}
+    if MCP_CONFIG_PATH.exists():
+        try:
+            data = json.loads(MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            data = {"mcpServers": {}}
+    servers = data.setdefault("mcpServers", {})
+
+    if cfg.get("mcp_playwright"):
+        servers["playwright"] = {"command": "npx", "args": ["-y", "@playwright/mcp@latest"]}
+    else:
+        servers.pop("playwright", None)
+
+    if cfg.get("mcp_gmail"):
+        servers["gmail"] = {"command": "npx", "args": ["-y", "@gongrzhe/server-gmail-autoauth-mcp"]}
+    else:
+        servers.pop("gmail", None)
+
+    if cfg.get("mcp_elevenlabs"):
+        servers["elevenlabs"] = {
+            "command": "uvx",
+            "args": ["elevenlabs-mcp"],
+            "env": {"ELEVENLABS_API_KEY": cfg.get("elevenlabs_key", "")},
+        }
+    else:
+        servers.pop("elevenlabs", None)
+
+    if cfg.get("mcp_revenuecat"):
+        servers["revenuecat"] = {
+            "type": "http",
+            "url": "https://mcp.revenuecat.ai/mcp",
+            "headers": {"Authorization": f"Bearer {cfg.get('revenuecat_key', '')}"},
+        }
+    else:
+        servers.pop("revenuecat", None)
+
+    if cfg.get("mcp_postiz"):
+        servers["postiz"] = {
+            "type": "http",
+            "url": cfg.get("postiz_url", "http://localhost:5000") + "/mcp/" + cfg.get("postiz_key", ""),
+        }
+    else:
+        servers.pop("postiz", None)
+
+    if cfg.get("mcp_meta_ads"):
+        servers["meta-ads"] = {"type": "http", "url": "https://mcp.facebook.com/ads"}
+    else:
+        servers.pop("meta-ads", None)
+
+    # ── researched "top 8" additions ───────────────────────────────────────
+    if cfg.get("mcp_gcal"):
+        servers["google-calendar"] = {"command": "npx", "args": ["-y", "@cocal/google-calendar-mcp"]}
+    else:
+        servers.pop("google-calendar", None)
+
+    if cfg.get("mcp_homeassistant"):
+        servers["home-assistant"] = {
+            "type": "http",
+            "url": cfg.get("homeassistant_url", "http://homeassistant.local:8123") + "/mcp_server/sse",
+            "headers": {"Authorization": f"Bearer {cfg.get('homeassistant_token', '')}"},
+        }
+    else:
+        servers.pop("home-assistant", None)
+
+    if cfg.get("mcp_exa"):
+        servers["exa"] = {
+            "type": "http",
+            "url": f"https://mcp.exa.ai/mcp?exaApiKey={cfg.get('exa_key', '')}",
+        }
+    else:
+        servers.pop("exa", None)
+
+    if cfg.get("mcp_github"):
+        servers["github"] = {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": cfg.get("github_token", "")},
+        }
+    else:
+        servers.pop("github", None)
+
+    if cfg.get("mcp_notion"):
+        servers["notion"] = {
+            "command": "npx",
+            "args": ["-y", "@notionhq/notion-mcp-server"],
+            "env": {"NOTION_TOKEN": cfg.get("notion_token", "")},
+        }
+    else:
+        servers.pop("notion", None)
+
+    if cfg.get("mcp_todoist"):
+        servers["todoist"] = {"command": "npx", "args": ["-y", "mcp-remote", "https://ai.todoist.net/mcp"]}
+    else:
+        servers.pop("todoist", None)
+
+    if cfg.get("mcp_mem0"):
+        servers["mem0"] = {
+            "command": "npx",
+            "args": ["-y", "@mem0/mcp"],
+            "env": {"MEM0_API_KEY": cfg.get("mem0_key", "")},
+        }
+    else:
+        servers.pop("mem0", None)
+
+    if cfg.get("mcp_stripe"):
+        servers["stripe"] = {
+            "type": "http",
+            "url": "https://mcp.stripe.com",
+            "headers": {"Authorization": f"Bearer {cfg.get('stripe_key', '')}"},
+        }
+    else:
+        servers.pop("stripe", None)
+
+    if not servers:
+        if MCP_CONFIG_PATH.exists():
+            MCP_CONFIG_PATH.unlink()
+        return
+
+    data["_comment"] = (
+        "Generated by the JARVIS setup wizard. Format matches Claude Code's .mcp.json. "
+        "Edit freely; re-running the wizard will only touch the integrations you toggled."
+    )
+    MCP_CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    log(f"MCP integrations written to {MCP_CONFIG_PATH} ({', '.join(servers)})")
 
 
 def save_config(cfg: dict) -> None:
@@ -549,6 +724,7 @@ def save_config(cfg: dict) -> None:
         env.setdefault("JARVIS_PIPER_BIN", "piper")
 
     write_personal_prompt(cfg)
+    save_mcp_config(cfg)
 
     lines = ["# JARVIS credentials — generated by bootstrap.py", ""]
     for k, v in env.items():
@@ -654,6 +830,8 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/hardware":
             self._json(detect_hardware())
+        elif self.path == "/api/pick_folder":
+            self._json({"path": pick_folder()})
         elif self.path == "/api/log_stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -704,6 +882,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(verify_openrouter_key(body.get("key", "")))
             else:
                 self._json({"ok": False, "message": "Unknown backend"})
+        elif self.path == "/api/open":
+            body = self._body()
+            url = body.get("url", "")
+            if url.startswith("http://") or url.startswith("https://"):
+                try:
+                    import webbrowser
+                    webbrowser.open(url)
+                    self._json({"ok": True})
+                except Exception as exc:
+                    self._json({"ok": False, "error": str(exc)}, status=500)
+            else:
+                self._json({"ok": False, "error": "invalid url"}, status=400)
         elif self.path == "/api/launch":
             launch_jarvis()
             self._json({"ok": True})

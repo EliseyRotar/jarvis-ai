@@ -63,3 +63,7 @@ models/
 # ── Logs ───────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# Cloned reference repo (not part of JARVIS)
+OpenJarvis/
+addons.txt
