@@ -90,6 +90,10 @@ async def setup() -> dict[str, Any]:
 
 
 def _q(s: str) -> str:
-    """Shell-quote a string."""
+    """Shell-quote a string for the platform's default shell."""
+    if os.name == "nt":
+        # cmd.exe doesn't understand single quotes; use double quotes and
+        # escape embedded double quotes.
+        return '"' + s.replace('"', '\\"') + '"'
     import shlex
     return shlex.quote(s)
