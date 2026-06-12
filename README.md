@@ -38,6 +38,10 @@ jarvis/
 ├── task_manager.py      # ATE: parses task_plan/step/task_complete
 ├── tts.py               # piper wrapper (strips all <jarvis:*> tags first)
 ├── tools/{bash_exec,file_ops,hypr,web_search,memory}.py
+│   memory.py            # SQLite + FTS5 full-text memory
+│   audit.py             # security audit log + secret redaction
+│   scheduler.py         # daily/interval/once scheduled prompts
+│   channels.py          # Telegram bridge (reach JARVIS from your phone)
 ├── static/{index.html,style.css,jarvis.js}
 └── system_prompt.txt
 ```
@@ -240,7 +244,20 @@ keeps the lights on.
 | `JARVIS_DISABLE_WAKEWORD`   | unset                                                  | `1` to skip mic init |
 | `SEARX_URL`                 | unset                                                  | e.g. `http://localhost:8080` |
 | `BRAVE_API_KEY`             | unset                                                  | Used if SearXNG isn't configured |
+| `JARVIS_TELEGRAM_TOKEN`     | unset                                                  | Bot token (from @BotFather) to reach JARVIS via Telegram |
+| `JARVIS_TELEGRAM_ALLOWED_IDS` | unset                                                | Comma-separated chat ids allowed to message the bot |
 | `JARVIS_LOG_LEVEL`          | `INFO`                                                 | `DEBUG` for verbose |
+
+## Persistent stores
+
+JARVIS keeps everything local under `~/.jarvis/` (`%USERPROFILE%\.jarvis\` on Windows):
+
+| File | Contents |
+| ---- | -------- |
+| `memory.db` | Long-term memory — SQLite with **FTS5 full-text search** (BM25-ranked). Legacy `memory.json` is migrated automatically on first run. |
+| `audit.db` | Append-only **security audit log** of every tool call, with automatic secret redaction (API keys, tokens, private keys). Ask JARVIS "what have you done" to review it. |
+| `scheduler.db` | **Scheduled jobs** — prompts that run on a daily/interval/once schedule (e.g. a 6am morning brief). Say "every morning, brief me on…" to create one. |
+| `mcp.json` | External MCP connectors enabled via the setup wizard. |
 
 ## How it works
 
