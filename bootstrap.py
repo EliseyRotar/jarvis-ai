@@ -178,9 +178,9 @@ def run_install() -> None:
             _state["install_error"] = "pip install failed"
             return
 
-        log("Installing optional extras (wake word, WhatsApp)...")
+        log("Installing optional extras (wake word)...")
         wakeword_ok = True
-        for extra in ("wakeword", "whatsapp"):
+        for extra in ("wakeword",):
             rc = run_streamed([str(VENV_PY), "-m", "pip", "install", "-e", f"{ROOT}[{extra}]"])
             if rc != 0:
                 log(f"  ! optional extra '{extra}' failed to install — related features will be unavailable.")
@@ -543,6 +543,107 @@ def write_personal_prompt(cfg: dict) -> None:
     log("Personal system prompt written.")
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# WhatsApp bridge (QR pairing, run from the wizard)
+# ──────────────────────────────────────────────────────────────────────────
+
+WHATSAPP_DIR = ROOT / "whatsapp-mcp" / "whatsapp-bridge"
+WHATSAPP_EXE = WHATSAPP_DIR / ("whatsapp-bridge.exe" if IS_WINDOWS else "whatsapp-bridge")
+WHATSAPP_QR = WHATSAPP_DIR / "qr.png"
+
+_wa_lock = threading.Lock()
+_wa_state: dict = {
+    "running": False, "connected": False, "qr_ready": False,
+    "qr_version": 0, "error": None,
+}
+
+
+def _wa_reader(proc: subprocess.Popen) -> None:
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.rstrip()
+        if not line:
+            continue
+        log(f"[whatsapp] {line}")
+        with _wa_lock:
+            if "QR code image also saved to" in line or "Scan this QR code" in line:
+                _wa_state["qr_ready"] = True
+                _wa_state["qr_version"] += 1
+                _wa_state["error"] = None
+            elif "Connected to WhatsApp" in line or "Successfully connected and authenticated" in line:
+                _wa_state["connected"] = True
+                _wa_state["qr_ready"] = False
+                _wa_state["error"] = None
+            elif "Failed to connect" in line or "Timeout waiting for QR" in line:
+                _wa_state["error"] = line
+    rc = proc.wait()
+    with _wa_lock:
+        _wa_state["running"] = False
+        if rc != 0 and not _wa_state["connected"] and not _wa_state["error"]:
+            _wa_state["error"] = f"whatsapp-bridge exited with code {rc}"
+
+
+def _wa_bridge_already_up() -> bool:
+    """True if a whatsapp-bridge instance (e.g. the autostart task) already
+    has the REST API up — in which case it's already linked and we must not
+    spawn a second instance (it would fail to bind the port / db)."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", 8080)) == 0
+
+
+def start_whatsapp_bridge() -> dict:
+    """Launch the WhatsApp bridge (building it first if needed) so the wizard
+    can show a live QR code for pairing. Idempotent — safe to call repeatedly.
+    """
+    with _wa_lock:
+        if _wa_state["running"] or _wa_state["connected"]:
+            return dict(_wa_state)
+        if _wa_bridge_already_up():
+            log("WhatsApp bridge already running (autostart) — already linked.")
+            _wa_state.update({"running": False, "connected": True, "qr_ready": False, "error": None})
+            return dict(_wa_state)
+        if not WHATSAPP_EXE.exists() and (IS_WINDOWS or not (shutil.which("go") and shutil.which("gcc"))):
+            _wa_state["error"] = (
+                f"whatsapp-bridge binary not found at {WHATSAPP_EXE}. "
+                "Build it with Go (CGO_ENABLED=1 go build -o whatsapp-bridge[.exe] .) and retry."
+            )
+            return dict(_wa_state)
+        _wa_state.update({"running": True, "connected": False, "qr_ready": False, "error": None})
+
+    if not WHATSAPP_EXE.exists():
+        log("Building whatsapp-bridge (requires Go + gcc, this can take a minute)...")
+        rc = run_streamed(["go", "build", "-o", str(WHATSAPP_EXE), "."], cwd=WHATSAPP_DIR,
+                           env={**os.environ, "CGO_ENABLED": "1"})
+        if rc != 0 or not WHATSAPP_EXE.exists():
+            with _wa_lock:
+                _wa_state["running"] = False
+                _wa_state["error"] = "Failed to build whatsapp-bridge — check Go/gcc are installed."
+            return dict(_wa_state)
+
+    WHATSAPP_QR.unlink(missing_ok=True)
+    try:
+        proc = subprocess.Popen(
+            [str(WHATSAPP_EXE)], cwd=str(WHATSAPP_DIR),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+    except Exception as exc:
+        with _wa_lock:
+            _wa_state["running"] = False
+            _wa_state["error"] = f"failed to start whatsapp-bridge: {exc}"
+        return dict(_wa_state)
+
+    threading.Thread(target=_wa_reader, args=(proc,), daemon=True).start()
+    log("Starting WhatsApp bridge — waiting for QR code...")
+    return dict(_wa_state)
+
+
+def whatsapp_status() -> dict:
+    with _wa_lock:
+        return dict(_wa_state)
+
+
 MCP_CONFIG_PATH = JARVIS_DIR / "mcp.json"
 
 
@@ -555,6 +656,19 @@ def save_mcp_config(cfg: dict) -> None:
         except Exception:
             data = {"mcpServers": {}}
     servers = data.setdefault("mcpServers", {})
+
+    if cfg.get("mcp_whatsapp"):
+        servers["whatsapp"] = {
+            "command": "uv",
+            "args": [
+                "--directory",
+                str(ROOT / "whatsapp-mcp" / "whatsapp-mcp-server"),
+                "run",
+                "main.py",
+            ],
+        }
+    else:
+        servers.pop("whatsapp", None)
 
     if cfg.get("mcp_playwright"):
         servers["playwright"] = {"command": "npx", "args": ["-y", "@playwright/mcp@latest"]}
@@ -832,6 +946,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(detect_hardware())
         elif self.path == "/api/pick_folder":
             self._json({"path": pick_folder()})
+        elif self.path == "/api/whatsapp/status":
+            self._json(whatsapp_status())
+        elif self.path == "/api/whatsapp/qr":
+            if WHATSAPP_QR.exists():
+                try:
+                    data = WHATSAPP_QR.read_bytes()
+                except OSError:
+                    data = b""
+                if data:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+            self.send_response(404)
+            self.end_headers()
         elif self.path == "/api/log_stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -894,6 +1026,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False, "error": str(exc)}, status=500)
             else:
                 self._json({"ok": False, "error": "invalid url"}, status=400)
+        elif self.path == "/api/whatsapp/start":
+            self._json(start_whatsapp_bridge())
         elif self.path == "/api/launch":
             launch_jarvis()
             self._json({"ok": True})
