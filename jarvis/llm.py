@@ -32,7 +32,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 import aiohttp
 
-from .tools import bash_exec, deep_research, file_ops, hypr, memory, web_search, whatsapp
+from .tools import bash_exec, deep_research, file_ops, hypr, memory, web_search
 from . import tts as tts_module
 
 
@@ -324,44 +324,6 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "whatsapp_send",
-            "description": "Send a WhatsApp message to a saved contact via WhatsApp Web automation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "contact": {"type": "string", "description": "Contact alias (e.g. 'mama', 'luca') or WhatsApp display name"},
-                    "message": {"type": "string"},
-                },
-                "required": ["contact", "message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "whatsapp_add_contact",
-            "description": "Save a WhatsApp contact alias mapping (alias → WhatsApp display name).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "alias": {"type": "string"},
-                    "wa_display_name": {"type": "string", "description": "Exact name as shown in WhatsApp"},
-                },
-                "required": ["alias", "wa_display_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "whatsapp_list_contacts",
-            "description": "List all saved WhatsApp contact aliases.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
 ]
 
 
@@ -433,12 +395,6 @@ async def _dispatch_tool_inner(name: str, args: dict[str, Any]) -> dict[str, Any
                 from .main import _detect_text_language
                 lang = _detect_text_language(text)
             return await tts_module.speak(text, lang=lang)
-        if name == "whatsapp_send":
-            return await whatsapp.send(args["contact"], args["message"])
-        if name == "whatsapp_add_contact":
-            return await whatsapp.add_contact(args["alias"], args["wa_display_name"])
-        if name == "whatsapp_list_contacts":
-            return await whatsapp.list_contacts()
         return {"ok": False, "error": f"unknown tool: {name}"}
     except KeyError as missing:
         return {"ok": False, "error": f"missing required arg: {missing}"}
@@ -826,11 +782,6 @@ def _make_claude_tools():
               {"query": str, "max_sources": int}),
         _wrap("tts_speak", "Speak text aloud through piper (tags stripped).",
               {"text": str, "lang": str}),
-        _wrap("whatsapp_send", "Send a WhatsApp message via WhatsApp Web automation.",
-              {"contact": str, "message": str}),
-        _wrap("whatsapp_add_contact", "Save a WhatsApp contact alias → display name mapping.",
-              {"alias": str, "wa_display_name": str}),
-        _wrap("whatsapp_list_contacts", "List all saved WhatsApp contact aliases.", {}),
     ]
 
 
