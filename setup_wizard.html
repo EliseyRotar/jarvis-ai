@@ -191,6 +191,30 @@
       <span class="desc">Lets JARVIS drive a real browser — fill forms, click, scrape pages. No key needed.</span>
     </label>
 
+    <label class="check-row"><input type="checkbox" id="mcp_whatsapp">
+      <span class="title">WhatsApp</span>
+      <span class="desc">Read and send WhatsApp messages, files, and voice notes through your own phone number — just scan a QR code once.</span>
+    </label>
+    <div id="whatsapp-fields" style="margin-left:26px; display:none">
+      <div id="wa-box" style="border:1px solid #2a3a52; border-radius:10px; padding:14px; margin-top:6px; background:#0d1420">
+        <p id="wa-status" style="margin:0 0 10px; font-size:13px; display:flex; align-items:center">
+          <span class="spinner" id="wa-spinner"></span><span id="wa-status-text">Starting WhatsApp bridge…</span>
+        </p>
+        <div id="wa-qr-wrap" style="display:none; text-align:center">
+          <img id="wa-qr" alt="WhatsApp QR code" style="width:220px; height:220px; border-radius:8px; border:1px solid #2a3a52; background:#fff; padding:8px">
+          <p style="font-size:12px; color:var(--muted); margin:10px 0 0">
+            On your phone: WhatsApp → Settings → Linked Devices → Link a device, then scan this code.
+            The code refreshes automatically if it expires.
+          </p>
+        </div>
+        <p id="wa-connected" style="display:none; margin:0">
+          <span class="pill ok">✓ Linked</span>
+          <span style="margin-left:8px; font-size:12px; color:var(--muted)">WhatsApp is connected — JARVIS can now read and send messages on your behalf.</span>
+        </p>
+        <p id="wa-error" style="display:none; margin:0; font-size:12px; color:var(--err)"></p>
+      </div>
+    </div>
+
     <label class="check-row"><input type="checkbox" id="mcp_gmail">
       <span class="title">Gmail</span>
       <span class="desc">Read, search, and send email. First run opens a browser to authorize via OAuth.</span>
@@ -509,6 +533,75 @@ document.getElementById('btn-step2-next').onclick = () => goTo(3);
 document.getElementById('btn-step3-back').onclick = () => goTo(2);
 document.getElementById('btn-step3-next').onclick = () => goTo(4);
 
+// ── Step 4: WhatsApp QR pairing ──
+let waPoll = null;
+const waCb = document.getElementById('mcp_whatsapp');
+const waFields = document.getElementById('whatsapp-fields');
+const waSpinner = document.getElementById('wa-spinner');
+const waStatusText = document.getElementById('wa-status-text');
+const waQrWrap = document.getElementById('wa-qr-wrap');
+const waQr = document.getElementById('wa-qr');
+const waConnected = document.getElementById('wa-connected');
+const waError = document.getElementById('wa-error');
+let waLastQrVersion = 0;
+
+function pollWhatsApp() {
+  fetch('/api/whatsapp/status').then(r => r.json()).then(s => {
+    if (s.connected) {
+      waSpinner.style.display = 'none';
+      document.getElementById('wa-status').style.display = 'none';
+      waQrWrap.style.display = 'none';
+      waError.style.display = 'none';
+      waConnected.style.display = 'block';
+      if (waPoll) { clearInterval(waPoll); waPoll = null; }
+      return;
+    }
+    document.getElementById('wa-status').style.display = 'flex';
+    waConnected.style.display = 'none';
+    if (s.error) {
+      waSpinner.style.display = 'none';
+      waStatusText.textContent = 'Something went wrong:';
+      waError.textContent = s.error;
+      waError.style.display = 'block';
+      waQrWrap.style.display = 'none';
+      return;
+    }
+    waError.style.display = 'none';
+    if (s.qr_ready) {
+      waSpinner.style.display = 'none';
+      waStatusText.textContent = 'Scan this QR code with your phone:';
+      waQrWrap.style.display = 'block';
+      if (s.qr_version !== waLastQrVersion) {
+        waLastQrVersion = s.qr_version;
+        waQr.src = '/api/whatsapp/qr?v=' + s.qr_version;
+      }
+    } else {
+      waSpinner.style.display = 'inline-block';
+      waStatusText.textContent = 'Starting WhatsApp bridge…';
+      waQrWrap.style.display = 'none';
+    }
+  }).catch(() => {});
+}
+
+waCb.onchange = () => {
+  waFields.style.display = waCb.checked ? 'block' : 'none';
+  if (waCb.checked) {
+    waSpinner.style.display = 'inline-block';
+    document.getElementById('wa-status').style.display = 'flex';
+    waStatusText.textContent = 'Starting WhatsApp bridge…';
+    waQrWrap.style.display = 'none';
+    waConnected.style.display = 'none';
+    waError.style.display = 'none';
+    waLastQrVersion = 0;
+    fetch('/api/whatsapp/start', { method: 'POST' });
+    if (!waPoll) waPoll = setInterval(pollWhatsApp, 1500);
+    pollWhatsApp();
+  } else if (waPoll) {
+    clearInterval(waPoll);
+    waPoll = null;
+  }
+};
+
 // ── Step 4: integrations ──
 [['mcp_elevenlabs','elevenlabs-fields'], ['mcp_revenuecat','revenuecat-fields'], ['mcp_postiz','postiz-fields'],
  ['mcp_homeassistant','homeassistant-fields'], ['mcp_exa','exa-fields'], ['mcp_github','github-fields'],
@@ -555,6 +648,7 @@ document.getElementById('btn-launch').onclick = () => {
     user_name: document.getElementById('user_name').value,
     user_hw: document.getElementById('user_hw').value,
     mcp_playwright: document.getElementById('mcp_playwright').checked,
+    mcp_whatsapp: document.getElementById('mcp_whatsapp').checked,
     mcp_gmail: document.getElementById('mcp_gmail').checked,
     mcp_elevenlabs: document.getElementById('mcp_elevenlabs').checked,
     elevenlabs_key: document.getElementById('elevenlabs_key').value,
