@@ -17,10 +17,11 @@ dependencies = [
     "aiohttp>=3.9",
     "claude-agent-sdk>=0.1.0",
     "faster-whisper>=1.0",
-    "numpy>=1.26,<2",
+    "numpy>=1.26,<2; python_version < '3.13'",
+    "numpy>=2; python_version >= '3.13'",
     "edge-tts>=6.1.9",
-    "uvloop>=0.17",
-    "httptools>=0.6",
+    "uvloop>=0.17; sys_platform != 'win32'",
+    "httptools>=0.6; sys_platform != 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -28,7 +29,7 @@ dependencies = [
 wakeword = [
     "openwakeword>=0.6.0",
     "sounddevice>=0.4.6",
-    "webrtcvad>=2.0.10",
+    "webrtcvad>=2.0.10; sys_platform != 'win32'",
 ]
 # WhatsApp Web automation
 whatsapp = [
