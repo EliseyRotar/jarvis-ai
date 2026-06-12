@@ -31,13 +31,9 @@ wakeword = [
     "sounddevice>=0.4.6",
     "webrtcvad>=2.0.10; sys_platform != 'win32'",
 ]
-# WhatsApp Web automation
-whatsapp = [
-    "playwright>=1.40",
-]
 # All optional extras
 all = [
-    "jarvis-ai[wakeword,whatsapp]",
+    "jarvis-ai[wakeword]",
 ]
 # Development / test tooling
 dev = [
