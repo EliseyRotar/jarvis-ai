@@ -44,16 +44,54 @@ jarvis/
 
 ## Quick start
 
+**Linux / macOS:**
+
 ```bash
 git clone https://github.com/EliseyRotar/jarvis-ai && cd jarvis-ai
-./setup.sh        # detects your distro, installs deps, prompts for token + settings
-./run_optimized.sh
+./start.sh
 ```
 
-`setup.sh` is interactive and idempotent — it detects your package manager and
-desktop, creates the venv, asks for your Claude/OpenRouter token, lets you pick a
-model + STT size, downloads piper voices, and generates a personalized system
-prompt. The manual steps below are for when you'd rather configure things yourself.
+**Windows 11:**
+
+```powershell
+git clone https://github.com/EliseyRotar/jarvis-ai && cd jarvis-ai
+.\start.ps1
+```
+
+`start.sh` / `start.ps1` is the single entry point — just run it. On first run
+it opens a setup wizard at `http://127.0.0.1:8765` in your browser that:
+
+- creates the virtualenv and installs all dependencies, streaming live
+  install logs to the page (and, on Linux, tries to install `piper` /
+  `ffmpeg` via your distro's package manager with passwordless sudo);
+- lets you choose and configure the AI backend — **Claude Pro** (paste an
+  OAuth token from `claude setup-token`), **OpenRouter** (API key), or fully
+  offline **Ollama** (auto-detects local models) — with a **Verify** button
+  that checks your token/key against the provider before you continue;
+- lets you pick the Whisper STT size, enable/disable the "Hey Jarvis" wake
+  word, and download piper offline TTS voices (English/Italian/Russian);
+- collects a bit of personalization (your name, hardware) for the system
+  prompt — hardware (CPU, RAM, GPU) is auto-detected and pre-filled, saved
+  to `jarvis/personal info jarvis/system_prompt.txt`, never committed.
+
+On Windows, the wizard also installs `ffmpeg` via `winget` and downloads a
+`piper.exe` binary automatically, so offline TTS works out of the box.
+
+Once configured, it launches JARVIS and the page redirects to the live HUD.
+On subsequent runs, `start.sh`/`start.ps1` skips the wizard and launches
+JARVIS directly — if JARVIS is already running, it just opens your browser
+to the HUD instead of failing to bind the port. Config and data live in
+`~/.jarvis/` (`%USERPROFILE%\.jarvis\` on Windows).
+
+On Windows, for audio playback install `ffmpeg` (`winget install ffmpeg`) or
+`mpv`. Piper TTS binaries can be downloaded from the
+[piper releases page](https://github.com/rhasspy/piper/releases) and added to
+PATH (optional — edge-tts works without it). Hyprland-specific desktop control
+(`hypr_dispatch`) is unavailable on Windows and degrades gracefully — JARVIS
+uses `bash_exec`/PowerShell commands instead.
+
+The manual steps below are for advanced users who'd rather configure things
+themselves without the wizard.
 
 ## Manual setup
 
