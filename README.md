@@ -1,14 +1,35 @@
 # J.A.R.V.I.S.
 
 > Just A Rather Very Intelligent System — a local, voice-driven AI operator for
-> Linux. Backed by your **Claude Pro** subscription, **OpenRouter**, or a
-> fully-offline **Ollama** model.
+> Linux and Windows. Backed by your **Claude Pro** subscription, **OpenRouter**,
+> or a fully-offline **Ollama** model.
 >
-> Runs on **any Linux distro**. Hyprland gets deep window-manager integration via
-> the `hypr_dispatch` tool; on other desktops that tool degrades gracefully and
-> JARVIS controls things through plain shell commands instead.
+> Runs on **any Linux distro** and **Windows 11**. Hyprland gets deep window-manager
+> integration via the `hypr_dispatch` tool; on other desktops/Windows that tool
+> degrades gracefully and JARVIS controls things through plain shell/PowerShell
+> commands instead.
 
 ![JARVIS HUD](docs/img/hud.png)
+
+## Features
+
+- **Voice-first** — "Hey Jarvis" wake word, faster-whisper STT, piper offline TTS
+  (or edge-tts), with a live HUD showing JARVIS's thinking, tool calls, and the
+  Agentic Task Engine's step-by-step progress.
+- **Your AI, your terms** — Claude Pro/Max subscription (via OAuth, no API
+  billing), OpenRouter (cloud + free tiers), or fully offline Ollama, with
+  automatic fallback between them.
+- **Full system access** — shell, files, browser/window control, web search and
+  deep research, all with an append-only audited security log.
+- **Long-term memory** — SQLite + FTS5 full-text search across everything JARVIS
+  has learned, plus a daily/interval/once task scheduler.
+- **Reach JARVIS from anywhere** — Telegram bridge, and a vendored
+  [WhatsApp MCP integration](#whatsapp-integration) (read/search/send messages,
+  files, and voice notes from your own number, linked via a QR code in the
+  setup wizard).
+- **One-command setup** — `start.sh` / `start.ps1` runs a browser-based wizard
+  that installs everything, configures your AI backend, and lets you toggle
+  optional integrations (WhatsApp, Gmail, GitHub, Home Assistant, and more).
 
 *The HUD: live thinking stream (left), arc-reactor voice visualizer + response +
 transcript (center), and the Agentic Task Engine progress tracker + tool calls
@@ -44,6 +65,10 @@ jarvis/
 │   channels.py          # Telegram bridge (reach JARVIS from your phone)
 ├── static/{index.html,style.css,jarvis.js}
 └── system_prompt.txt
+
+whatsapp-mcp/             # vendored WhatsApp MCP integration (optional)
+├── whatsapp-bridge/      # Go service: WhatsApp session, QR pairing, REST API
+└── whatsapp-mcp-server/  # Python MCP server: search/read/send tools
 ```
 
 ## Quick start
@@ -77,6 +102,10 @@ it opens a setup wizard at `http://127.0.0.1:8765` in your browser that:
 - collects a bit of personalization (your name, hardware) for the system
   prompt — hardware (CPU, RAM, GPU) is auto-detected and pre-filled, saved
   to `jarvis/personal info jarvis/system_prompt.txt`, never committed.
+- lets you toggle optional **MCP integrations** — including **WhatsApp**: tick
+  the box and a QR code appears right in the wizard, scan it with your phone
+  (WhatsApp → Linked Devices → Link a device) and JARVIS can read/send WhatsApp
+  messages from then on. See [WhatsApp integration](#whatsapp-integration).
 
 On Windows, the wizard also installs `ffmpeg` via `winget` and downloads a
 `piper.exe` binary automatically, so offline TTS works out of the box.
@@ -206,6 +235,59 @@ Copy [`mcp.json.example`](mcp.json.example) to `~/.jarvis/mcp.json`, list your
 servers (same format as Claude Code's `.mcp.json`), and restart. Tools from each
 server become available to JARVIS automatically.
 
+## WhatsApp integration
+
+JARVIS ships with [`whatsapp-mcp`](whatsapp-mcp/) — a vendored copy of
+[lharries/whatsapp-mcp](https://github.com/lharries/whatsapp-mcp) (MIT) — so it
+can search your chats, read message history (including images, audio, and
+documents), and send messages, files, and voice notes through **your own
+WhatsApp account**, with no third-party server in the middle.
+
+It has two parts:
+
+- **`whatsapp-bridge`** (Go) — connects to WhatsApp's multi-device protocol,
+  syncs your chats/messages into a local SQLite database, and exposes a small
+  REST API on `localhost:8080`.
+- **`whatsapp-mcp-server`** (Python, via `uv`) — an MCP server that gives
+  JARVIS tools to search contacts, list chats, read messages, and send content
+  by talking to the bridge.
+
+### Easiest: pair during setup
+
+In the setup wizard's **Integrations** step, tick **WhatsApp**. JARVIS launches
+the bridge and shows a live QR code right in the page — open WhatsApp on your
+phone, go to **Settings → Linked Devices → Link a device**, and scan it. Once
+linked, the wizard marks it "✓ Linked" and writes the server entry to
+`~/.jarvis/mcp.json` automatically.
+
+### Manual setup
+
+```bash
+# 1. Build and run the bridge once to pair via QR code (terminal + qr.png):
+cd whatsapp-mcp/whatsapp-bridge
+./run.sh        # Linux/macOS — builds with Go + CGO on first run
+# .\run.ps1     # Windows
+
+# 2. Add the MCP server to ~/.jarvis/mcp.json (see mcp.json.example):
+#    "whatsapp": {
+#      "command": "uv",
+#      "args": ["--directory", "/path/to/jarvis-ai/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"]
+#    }
+```
+
+The bridge needs Go + a C compiler (CGO, for `go-sqlite3`) to build, and the
+MCP server needs [`uv`](https://docs.astral.sh/uv/). Both are one-time
+requirements — after the first build/pairing, restarting JARVIS is enough.
+
+**Keeping it running:** the bridge must stay running for messages to sync and
+for sends to work. On Windows, point a Scheduled Task (trigger: at logon) at
+`whatsapp-bridge.exe`; on Linux, a systemd user service or your window manager's
+autostart works well.
+
+**Data & privacy:** all session data, message history, and media live in
+`whatsapp-mcp/whatsapp-bridge/store/` (gitignored, never leaves your machine).
+Delete that folder to unlink and re-pair from scratch.
+
 ## Cost notes — Claude Pro programmatic credits
 
 Starting **June 15, 2026**, programmatic usage (SDK / CLI / third-party tools)
@@ -258,6 +340,10 @@ JARVIS keeps everything local under `~/.jarvis/` (`%USERPROFILE%\.jarvis\` on Wi
 | `audit.db` | Append-only **security audit log** of every tool call, with automatic secret redaction (API keys, tokens, private keys). Ask JARVIS "what have you done" to review it. |
 | `scheduler.db` | **Scheduled jobs** — prompts that run on a daily/interval/once schedule (e.g. a 6am morning brief). Say "every morning, brief me on…" to create one. |
 | `mcp.json` | External MCP connectors enabled via the setup wizard. |
+
+WhatsApp session data (paired device, messages, media) lives separately in
+`whatsapp-mcp/whatsapp-bridge/store/` inside the repo — see
+[WhatsApp integration](#whatsapp-integration).
 
 ## How it works
 
