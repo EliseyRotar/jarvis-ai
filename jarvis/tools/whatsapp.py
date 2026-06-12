@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ from . import bash_exec
 
 CONTACTS_FILE = Path.home() / ".jarvis" / "whatsapp_contacts.json"
 WA_SCRIPT = Path.home() / ".jarvis" / "automation" / "whatsapp_send.py"
+_SYSTEM_PYTHON = shutil.which("python3") or shutil.which("python") or sys.executable
 
 
 def _load_contacts() -> dict[str, str]:
@@ -40,7 +43,7 @@ async def send(contact_alias: str, message: str) -> dict[str, Any]:
     # Resolve alias → WhatsApp display name (fallback: use the alias directly)
     wa_name = contacts.get(contact_alias.lower(), contact_alias)
 
-    cmd = f'python3 {WA_SCRIPT} {_q(wa_name)} {_q(message)}'
+    cmd = f'{_q(_SYSTEM_PYTHON)} {_q(str(WA_SCRIPT))} {_q(wa_name)} {_q(message)}'
     # WhatsApp Web's first-load "downloading messages" sync can take 20-40s,
     # plus browser launch and send time. 60s was too tight and truncated runs.
     result = await bash_exec.run(cmd, timeout=150)
@@ -81,7 +84,7 @@ async def list_contacts() -> dict[str, Any]:
 
 async def setup() -> dict[str, Any]:
     """Open WhatsApp Web for initial QR scan (run once)."""
-    cmd = f'python3 {WA_SCRIPT} --setup'
+    cmd = f'{_q(_SYSTEM_PYTHON)} {_q(str(WA_SCRIPT))} --setup'
     result = await bash_exec.run(cmd, timeout=180)
     return {"ok": result["exit_code"] == 0, "stdout": result["stdout"]}
 
