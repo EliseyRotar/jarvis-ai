@@ -1,6 +1,11 @@
 {
   "_comment": "Copy to ~/.jarvis/mcp.json to give JARVIS extra tools via external MCP servers. Format matches Claude Code's .mcp.json. Only used by the Claude backend. Restart JARVIS after editing.",
   "mcpServers": {
+    "whatsapp": {
+      "command": "uv",
+      "args": ["--directory", "{{PATH_TO_JARVIS_AI}}/whatsapp-mcp/whatsapp-mcp-server", "run", "main.py"],
+      "_comment": "Requires the whatsapp-bridge (Go) to be running separately for first-time QR auth and message sync. See whatsapp-mcp/README.md."
+    },
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
