@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JARVIS Setup</title>
+<style>
+  :root {
+    --bg: #0a0e14; --panel: #121826; --accent: #3ddcff; --accent2: #ff7a3d;
+    --text: #d6e2f0; --muted: #6b7d94; --ok: #4cd97b; --err: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "Segoe UI", system-ui, sans-serif;
+    background: radial-gradient(circle at 50% -10%, #14202e 0%, var(--bg) 60%);
+    color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 720px; background: var(--panel); border: 1px solid #1f2c40;
+    border-radius: 14px; padding: 32px; box-shadow: 0 0 60px rgba(61,220,255,0.08);
+  }
+  h1 { margin: 0 0 4px; color: var(--accent); letter-spacing: 2px; font-weight: 600; }
+  .sub { color: var(--muted); margin-bottom: 24px; font-size: 14px; }
+  .steps { display: flex; gap: 8px; margin-bottom: 24px; }
+  .steps div { flex: 1; height: 4px; border-radius: 2px; background: #1f2c40; transition: background .3s; }
+  .steps div.active { background: var(--accent); }
+  .steps div.done { background: var(--ok); }
+  section { display: none; }
+  section.active { display: block; }
+  label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--muted); }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #2a3a52;
+    background: #0d1420; color: var(--text); font-size: 14px;
+  }
+  input[type=radio], input[type=checkbox] { margin-right: 8px; accent-color: var(--accent); }
+  .radio-row, .check-row { display: flex; align-items: center; padding: 8px 0; cursor: pointer; }
+  .radio-row span.title, .check-row span.title { font-weight: 600; }
+  .radio-row span.desc, .check-row span.desc { display: block; color: var(--muted); font-size: 12px; margin-left: 26px; }
+  .btn {
+    background: var(--accent); color: #021018; border: none; padding: 11px 22px;
+    border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 14px; letter-spacing: 1px;
+  }
+  .btn.secondary { background: transparent; border: 1px solid #2a3a52; color: var(--text); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .actions { display: flex; justify-content: space-between; margin-top: 24px; }
+  #log {
+    background: #060a10; border: 1px solid #1f2c40; border-radius: 8px; padding: 12px;
+    height: 260px; overflow-y: auto; font-family: "Cascadia Code", monospace; font-size: 12px;
+    color: #8fd6ff; white-space: pre-wrap; margin-top: 16px;
+  }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid #2a3a52;
+    border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; }
+  .pill.ok { background: rgba(76,217,123,.15); color: var(--ok); }
+  .pill.err { background: rgba(255,93,93,.15); color: var(--err); }
+  .row2 { display: flex; gap: 12px; }
+  .row2 > div { flex: 1; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>J · A · R · V · I · S</h1>
+  <div class="sub">First-time setup</div>
+  <div class="steps">
+    <div id="step-dot-0" class="active"></div>
+    <div id="step-dot-1"></div>
+    <div id="step-dot-2"></div>
+    <div id="step-dot-3"></div>
+    <div id="step-dot-4"></div>
+  </div>
+
+  <!-- Step 0: install -->
+  <section id="step-0" class="active">
+    <p>Installing JARVIS and its dependencies. This downloads Python packages
+       (and, on Linux, tries to install <code>piper</code> / <code>ffmpeg</code>
+       via your package manager). It can take a few minutes the first time.</p>
+    <p><span class="spinner" id="install-spinner"></span><span id="install-status">Starting...</span></p>
+    <div id="log"></div>
+    <div class="actions">
+      <span></span>
+      <button class="btn" id="btn-step0-next" disabled>Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 1: AI backend -->
+  <section id="step-1">
+    <p>Choose the AI that powers JARVIS:</p>
+
+    <label class="radio-row"><input type="radio" name="backend" value="claude" checked>
+      <span class="title">Claude Pro / Agent SDK</span>
+      <span class="desc">Best quality &amp; full tool use. Requires a Claude Pro/Max subscription OAuth token.</span>
+    </label>
+    <div id="claude-fields" style="margin-left:26px">
+      <label>Claude OAuth token (get one with: <code>npm install -g @anthropic-ai/claude-code && claude setup-token</code>)</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="claude_token" placeholder="sk-ant-oat01-...">
+        <button type="button" class="btn secondary" id="btn-verify-claude" style="flex:0 0 auto">Verify</button>
+      </div>
+      <p id="claude-verify-result" style="margin:6px 0 0; font-size:12px"></p>
+      <label>Model</label>
+      <select id="claude_model">
+        <option value="claude-haiku-4-5">claude-haiku-4-5 — fast, low cost</option>
+        <option value="claude-sonnet-4-6" selected>claude-sonnet-4-6 — balanced (recommended)</option>
+        <option value="claude-opus-4-7">claude-opus-4-7 — most capable, slower</option>
+      </select>
+    </div>
+
+    <label class="radio-row"><input type="radio" name="backend" value="openrouter">
+      <span class="title">OpenRouter</span>
+      <span class="desc">Cloud models via OpenRouter, including free tiers. Requires an API key.</span>
+    </label>
+    <div id="openrouter-fields" style="margin-left:26px; display:none">
+      <label>OpenRouter API key</label>
+      <div class="row2" style="align-items:center">
+        <input type="password" id="openrouter_key" placeholder="sk-or-...">
+        <button type="button" class="btn secondary" id="btn-verify-openrouter" style="flex:0 0 auto">Verify</button>
+      </div>
+      <p id="openrouter-verify-result" style="margin:6px 0 0; font-size:12px"></p>
+      <label>Model</label>
+      <input type="text" id="openrouter_model" value="openai/gpt-oss-120b:free">
+    </div>
+
+    <label class="radio-row"><input type="radio" name="backend" value="ollama">
+      <span class="title">Ollama (fully offline)</span>
+      <span class="desc">Runs a local model via Ollama. No internet or API key needed.</span>
+    </label>
+    <div id="ollama-fields" style="margin-left:26px; display:none">
+      <label>Local model</label>
+      <select id="ollama_model"><option value="llama3.1">llama3.1 (not detected — install via ollama pull)</option></select>
+    </div>
+
+    <div class="actions">
+      <button class="btn secondary" id="btn-step1-back">← Back</button>
+      <button class="btn" id="btn-step1-next">Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 2: Voice -->
+  <section id="step-2">
+    <p>Voice settings</p>
+    <label>Speech-to-text model (faster-whisper)</label>
+    <select id="whisper_model">
+      <option value="tiny.en">tiny.en — fastest, lowest accuracy</option>
+      <option value="base.en" selected>base.en — good balance (recommended)</option>
+      <option value="small.en">small.en — better accuracy, ~1 GB RAM</option>
+      <option value="medium.en">medium.en — high accuracy, ~2.5 GB RAM</option>
+    </select>
+
+    <label class="check-row"><input type="checkbox" id="wakeword" checked>
+      <span class="title">Enable "Hey Jarvis" wake word</span>
+    </label>
+
+    <p style="margin-top:18px">Offline TTS voices (piper) — optional, edge-tts works without these but needs internet:</p>
+    <label class="check-row"><input type="checkbox" id="piper_en" checked> <span class="title">English (en_GB-alan-medium, ~65 MB)</span></label>
+    <label class="check-row"><input type="checkbox" id="piper_it"> <span class="title">Italian (it_IT-riccardo-x_low, ~30 MB)</span></label>
+    <label class="check-row"><input type="checkbox" id="piper_ru"> <span class="title">Russian (ru_RU-ruslan-medium, ~65 MB)</span></label>
+
+    <div class="actions">
+      <button class="btn secondary" id="btn-step2-back">← Back</button>
+      <button class="btn" id="btn-step2-next">Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 3: Personalization -->
+  <section id="step-3">
+    <p>Personalize JARVIS (saved locally, never committed to git):</p>
+    <label>Your name</label>
+    <input type="text" id="user_name" placeholder="John">
+    <label>Your hardware <span style="color:var(--muted)">(auto-detected, edit if needed)</span></label>
+    <input type="text" id="user_hw" placeholder="Detecting...">
+    <div class="actions">
+      <button class="btn secondary" id="btn-step3-back">← Back</button>
+      <button class="btn" id="btn-step3-next">Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 4: Finish -->
+  <section id="step-4">
+    <p>Saving configuration and downloading any selected voices...</p>
+    <p id="finish-msg" style="display:none"><span class="pill ok">Ready</span> JARVIS is starting — this page will redirect automatically.</p>
+    <div class="actions">
+      <span></span>
+      <button class="btn" id="btn-launch">Save &amp; Launch JARVIS</button>
+    </div>
+  </section>
+</div>
+
+<script>
+const dots = [0,1,2,3,4].map(i => document.getElementById('step-dot-'+i));
+const sections = [0,1,2,3,4].map(i => document.getElementById('step-'+i));
+let current = 0;
+
+function goTo(n) {
+  sections[current].classList.remove('active');
+  dots[current].classList.remove('active');
+  dots[current].classList.add('done');
+  current = n;
+  sections[current].classList.add('active');
+  dots[current].classList.add('active');
+}
+
+// ── Step 0: install + log stream ──
+const logEl = document.getElementById('log');
+const installStatus = document.getElementById('install-status');
+const installSpinner = document.getElementById('install-spinner');
+const btnStep0Next = document.getElementById('btn-step0-next');
+
+function appendLog(target, line) {
+  target.textContent += line + "\n";
+  target.scrollTop = target.scrollHeight;
+}
+
+fetch('/api/state').then(r => r.json()).then(state => {
+  if (state.venv_ready && state.configured) {
+    // Already set up — shouldn't normally land here, but just in case.
+    installStatus.textContent = "Already configured.";
+    btnStep0Next.disabled = false;
+  }
+  if (state.ollama_models && state.ollama_models.length) {
+    const sel = document.getElementById('ollama_model');
+    sel.innerHTML = '';
+    state.ollama_models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      sel.appendChild(opt);
+    });
+  }
+});
+
+const es = new EventSource('/api/log_stream');
+es.onmessage = e => {
+  const line = JSON.parse(e.data);
+  appendLog(logEl, line);
+};
+es.addEventListener('state', e => {
+  const s = JSON.parse(e.data);
+  if (s.install_done) {
+    installSpinner.style.display = 'none';
+    installStatus.textContent = "Install complete.";
+    btnStep0Next.disabled = false;
+  } else if (s.install_error) {
+    installSpinner.style.display = 'none';
+    installStatus.innerHTML = '<span class="pill err">Error</span> ' + s.install_error;
+    btnStep0Next.disabled = false; // allow continuing anyway
+  } else if (s.installing) {
+    installStatus.textContent = "Installing...";
+  }
+  if (s.launched) {
+    document.getElementById('finish-msg').style.display = 'block';
+    setTimeout(() => { window.location.href = '/'; }, 2500);
+  }
+});
+
+fetch('/api/install', { method: 'POST' });
+
+btnStep0Next.onclick = () => goTo(1);
+
+// ── Hardware autoscan ──
+fetch('/api/hardware').then(r => r.json()).then(hw => {
+  const el = document.getElementById('user_hw');
+  if (hw.summary) el.value = hw.summary;
+  else el.placeholder = "i7-12700, 32GB RAM, RTX 4070";
+}).catch(() => {
+  document.getElementById('user_hw').placeholder = "i7-12700, 32GB RAM, RTX 4070";
+});
+
+// ── Step 1: backend selection ──
+function setVerifyResult(el, ok, message) {
+  el.textContent = (ok ? '✓ ' : '✗ ') + message;
+  el.style.color = ok ? 'var(--ok)' : 'var(--err)';
+}
+document.getElementById('btn-verify-claude').onclick = () => {
+  const el = document.getElementById('claude-verify-result');
+  const token = document.getElementById('claude_token').value;
+  el.textContent = 'Checking...';
+  el.style.color = 'var(--muted)';
+  fetch('/api/verify', { method: 'POST', body: JSON.stringify({ backend: 'claude', token }) })
+    .then(r => r.json())
+    .then(res => setVerifyResult(el, res.ok, res.message))
+    .catch(err => setVerifyResult(el, false, 'Request failed: ' + err));
+};
+document.getElementById('btn-verify-openrouter').onclick = () => {
+  const el = document.getElementById('openrouter-verify-result');
+  const key = document.getElementById('openrouter_key').value;
+  el.textContent = 'Checking...';
+  el.style.color = 'var(--muted)';
+  fetch('/api/verify', { method: 'POST', body: JSON.stringify({ backend: 'openrouter', key }) })
+    .then(r => r.json())
+    .then(res => setVerifyResult(el, res.ok, res.message))
+    .catch(err => setVerifyResult(el, false, 'Request failed: ' + err));
+};
+
+// ── Step 1: backend selection ──
+document.querySelectorAll('input[name=backend]').forEach(r => {
+  r.onchange = () => {
+    document.getElementById('claude-fields').style.display = r.value === 'claude' && r.checked ? 'block' : (document.querySelector('input[name=backend]:checked').value === 'claude' ? 'block' : 'none');
+    document.getElementById('claude-fields').style.display = document.querySelector('input[name=backend]:checked').value === 'claude' ? 'block' : 'none';
+    document.getElementById('openrouter-fields').style.display = document.querySelector('input[name=backend]:checked').value === 'openrouter' ? 'block' : 'none';
+    document.getElementById('ollama-fields').style.display = document.querySelector('input[name=backend]:checked').value === 'ollama' ? 'block' : 'none';
+  };
+});
+document.getElementById('btn-step1-back').onclick = () => goTo(0);
+document.getElementById('btn-step1-next').onclick = () => goTo(2);
+
+// ── Step 2 ──
+document.getElementById('btn-step2-back').onclick = () => goTo(1);
+document.getElementById('btn-step2-next').onclick = () => goTo(3);
+
+// ── Step 3 ──
+document.getElementById('btn-step3-back').onclick = () => goTo(2);
+document.getElementById('btn-step3-next').onclick = () => goTo(4);
+
+// ── Step 4: save + launch ──
+document.getElementById('btn-launch').onclick = () => {
+  const backend = document.querySelector('input[name=backend]:checked').value;
+  const cfg = {
+    backend,
+    claude_token: document.getElementById('claude_token').value,
+    claude_model: document.getElementById('claude_model').value,
+    openrouter_key: document.getElementById('openrouter_key').value,
+    openrouter_model: document.getElementById('openrouter_model').value,
+    ollama_model: document.getElementById('ollama_model').value,
+    whisper_model: document.getElementById('whisper_model').value,
+    disable_wakeword: !document.getElementById('wakeword').checked,
+    piper_en: document.getElementById('piper_en').checked,
+    piper_it: document.getElementById('piper_it').checked,
+    piper_ru: document.getElementById('piper_ru').checked,
+    user_name: document.getElementById('user_name').value,
+    user_hw: document.getElementById('user_hw').value,
+  };
+  document.getElementById('btn-launch').disabled = true;
+  fetch('/api/save_config', { method: 'POST', body: JSON.stringify(cfg) })
+    .then(r => r.json())
+    .then(() => fetch('/api/launch', { method: 'POST' }));
+};
+</script>
+</body>
+</html>
