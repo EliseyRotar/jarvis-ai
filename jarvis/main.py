@@ -280,7 +280,10 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
         await _emit({"type": "speaking", "state": "start"}, send)
         await tts.speak(reply, lang=detected_lang)
         await _emit({"type": "speaking", "state": "end"}, send)
-        await hypr_tool.dispatch("exec", f"firefox {WEBUI_URL}")
+        if os.name == "nt":
+            os.startfile(WEBUI_URL)  # noqa: S606
+        else:
+            await hypr_tool.dispatch("exec", f"firefox {WEBUI_URL}")
         return
 
     user_message = f"[VOICE] {text}" if voice else text
@@ -499,7 +502,10 @@ async def api_shutdown() -> dict[str, Any]:
 
     async def _do_shutdown() -> None:
         await asyncio.sleep(0.4)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if os.name == "nt":
+            os._exit(0)
+        else:
+            os.kill(os.getpid(), signal.SIGTERM)
 
     _create_task(_do_shutdown())
     return {"ok": True}
