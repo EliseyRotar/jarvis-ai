@@ -208,6 +208,33 @@ function pushTranscript(text, voice) {
   els.transcriptState.textContent = voice ? "voice" : "text";
 }
 
+// ── resumed conversation replay ─────────────────────────────────────────
+// On connect, the backend sends the restored conversation (from before a
+// reboot/restart/shutdown) so the UI picks up exactly where it left off.
+function renderHistory(messages) {
+  if (!messages.length) return;
+  for (const m of messages) {
+    const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    if (!text) continue;
+    if (m.role === "user") {
+      pushTranscript(text, false);
+    } else if (m.role === "assistant") {
+      if (els.responseStream.textContent.trim()) {
+        const sep = document.createElement("div");
+        sep.className = "turn-sep";
+        els.responseStream.appendChild(sep);
+      }
+      const rendered = document.createElement("div");
+      rendered.className = "resp-md";
+      setMarkdown(rendered, text);
+      els.responseStream.appendChild(rendered);
+    }
+  }
+  autoscroll(els.transcriptStream);
+  autoscroll(els.responseStream);
+  toast("Resumed previous conversation", "ok");
+}
+
 // ── actions panel ──────────────────────────────────────────────────────
 const actionRows = new Map(); // call_id → element
 
@@ -499,6 +526,9 @@ function handleMessage(msg) {
           if (opt.value === msg.model) { opt.selected = true; break; }
         }
       }
+      break;
+    case "history":
+      renderHistory(msg.messages || []);
       break;
     case "model_changed":
       for (const opt of els.modelSelect.options) {
