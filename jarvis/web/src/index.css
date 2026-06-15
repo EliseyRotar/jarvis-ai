@@ -60,6 +60,61 @@
   color-scheme: dark;
 }
 
+/* — light theme overrides — */
+:root.light {
+  --bg: #eef2f6;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #e3e9ef;
+  --line: #ccd6e0;
+  --line-bright: #aebdcd;
+  --text: #1c2b3a;
+  --text-dim: #5b7187;
+  --text-faint: #9aabbc;
+
+  --blue: #0091c7;
+  --blue-dim: #4fb8e0;
+  --blue-glow: rgba(0, 145, 199, 0.35);
+
+  --amber: #b06f00;
+  --amber-glow: rgba(176, 111, 0, 0.4);
+
+  --green: #0c9f78;
+  --red: #d6294a;
+  --red-glow: rgba(214, 41, 74, 0.4);
+
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-elev);
+  --card-foreground: var(--text);
+  --popover: var(--bg-elev);
+  --popover-foreground: var(--text);
+  --primary: var(--blue);
+  --primary-foreground: #ffffff;
+  --secondary: var(--bg-elev-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--bg-elev-2);
+  --muted-foreground: var(--text-dim);
+  --accent: var(--bg-elev-2);
+  --accent-foreground: var(--blue);
+  --destructive: var(--red);
+  --border: var(--line);
+  --input: var(--line-bright);
+  --ring: var(--blue-dim);
+  --sidebar: var(--bg-elev);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--blue);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--bg-elev-2);
+  --sidebar-accent-foreground: var(--blue);
+  --sidebar-border: var(--line);
+  --sidebar-ring: var(--blue-dim);
+  color-scheme: light;
+}
+
+:root.light body {
+  background: radial-gradient(circle at 50% 35%, #f6f9fc 0%, #dfe6ed 75%);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -202,6 +257,23 @@ body {
   vertical-align: -2px;
   animation: blink 0.9s steps(2) infinite;
   margin-left: 2px;
+}
+
+/* — system pulse top bar — */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+@keyframes pulse-travel {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.system-pulse {
+  width: 100%;
+  height: 3px;
+  flex-shrink: 0;
+  background-size: 200% 100%;
+  animation: pulse-travel 2.4s linear infinite, pulse-glow 1.6s ease-in-out infinite;
 }
 
 /* — markdown rendering — */

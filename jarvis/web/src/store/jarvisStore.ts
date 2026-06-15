@@ -43,6 +43,15 @@ export type TaskPlan = {
 
 export type ReactorState = 'ONLINE' | 'THINK' | 'SPEAK' | 'DONE' | 'HALT' | 'WAKE' | 'OFFLINE'
 
+export type TurnMeta = {
+  model?: string
+  usage?: any
+  total_cost_usd?: number
+  duration_ms?: number
+  duration_api_ms?: number
+  num_turns?: number
+}
+
 interface JarvisState {
   connected: boolean
   ready: boolean
@@ -60,6 +69,7 @@ interface JarvisState {
   toolCalls: ToolCall[]
   task: TaskPlan | null
   taskHistory: TaskPlan[]
+  lastTurnMeta: TurnMeta | null
   toasts: { id: string; message: string; kind: string }[]
 
   send: (obj: Record<string, unknown>) => void
@@ -93,6 +103,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   toolCalls: [],
   task: null,
   taskHistory: [],
+  lastTurnMeta: null,
   toasts: [],
 
   send: (obj) => {
@@ -158,6 +169,11 @@ function handleLlmEvent(ev: any) {
             : tc,
         ),
       }))
+      break
+    }
+    case 'turn_meta': {
+      const { type: _type, ...meta } = ev
+      set({ lastTurnMeta: meta })
       break
     }
     case 'error':

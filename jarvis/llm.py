@@ -1050,6 +1050,15 @@ async def _stream_chat_claude(
                 sid = getattr(msg, "session_id", None)
                 if sid:
                     _save_claude_session_id(sid)
+                await on_event({
+                    "type": "turn_meta",
+                    "model": get_active_model(),
+                    "usage": getattr(msg, "usage", None),
+                    "total_cost_usd": getattr(msg, "total_cost_usd", None),
+                    "duration_ms": getattr(msg, "duration_ms", None),
+                    "duration_api_ms": getattr(msg, "duration_api_ms", None),
+                    "num_turns": getattr(msg, "num_turns", None),
+                })
                 break
     except Exception as exc:
         await on_event({"type": "error", "message": f"Claude stream failed: {exc}"})
