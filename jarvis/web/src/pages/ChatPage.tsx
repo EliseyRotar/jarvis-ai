@@ -48,6 +48,21 @@ function ThinkPanel() {
   )
 }
 
+function TurnMetaFooter() {
+  const meta = useJarvisStore((s) => s.lastTurnMeta)
+  if (!meta) return null
+  const usage = meta.usage || {}
+  const totalTokens = (usage.input_tokens || 0) + (usage.output_tokens || 0)
+  return (
+    <div className="flex flex-wrap items-center gap-3 border-t border-[var(--line)] px-3.5 py-1.5 text-[10px] uppercase tracking-[0.15em] text-[var(--text-faint)]">
+      {meta.model && <span>{meta.model}</span>}
+      {totalTokens > 0 && <span>{totalTokens.toLocaleString()} tok</span>}
+      {typeof meta.total_cost_usd === 'number' && <span>${meta.total_cost_usd.toFixed(4)}</span>}
+      {typeof meta.duration_ms === 'number' && <span>{(meta.duration_ms / 1000).toFixed(1)}s</span>}
+    </div>
+  )
+}
+
 function ResponsePanel() {
   const responseTurns = useJarvisStore((s) => s.responseTurns)
   const responseLive = useJarvisStore((s) => s.responseLive)
@@ -76,6 +91,7 @@ function ResponsePanel() {
           <div className="text-[var(--text-faint)]">Awaiting input…</div>
         )}
       </div>
+      <TurnMetaFooter />
     </section>
   )
 }

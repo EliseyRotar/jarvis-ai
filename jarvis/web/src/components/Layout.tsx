@@ -3,6 +3,7 @@ import { Outlet } from 'react-router'
 import { Sidebar } from './Sidebar'
 import { CommandPalette } from './CommandPalette'
 import { Toasts } from './Toasts'
+import { SystemPulse } from './SystemPulse'
 import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvisStore'
 
 function Clock() {
@@ -86,6 +87,7 @@ export function Layout() {
       <div className="vignette" />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
+        <SystemPulse />
         <TopBar />
         <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />

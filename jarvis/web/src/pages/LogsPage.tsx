@@ -21,6 +21,7 @@ export function LogsPage() {
   const [messages, setMessages] = useState<HistoryMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -39,6 +40,10 @@ export function LogsPage() {
     load()
   }, [])
 
+  const filtered = query
+    ? messages.filter((m) => contentToText(m.content).toLowerCase().includes(query.toLowerCase()))
+    : messages
+
   return (
     <div className="flex h-full flex-col p-3.5">
       <section className="hud-panel flex min-h-0 flex-1 flex-col">
@@ -56,12 +61,23 @@ export function LogsPage() {
             </button>
           </div>
         </div>
+        <div className="border-b border-[var(--line)] p-2.5">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter messages…"
+            className="w-full rounded-sm border border-[var(--line-bright)] bg-transparent px-2.5 py-1.5 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--blue)]"
+          />
+        </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-3.5 text-sm leading-[1.65]">
           {error && <div className="p-2 text-xs text-[var(--red)]">Error: {error}</div>}
           {!error && messages.length === 0 && (
             <div className="text-xs text-[var(--text-faint)]">No persisted history yet.</div>
           )}
-          {messages.map((m, i) => (
+          {!error && messages.length > 0 && filtered.length === 0 && (
+            <div className="text-xs text-[var(--text-faint)]">No messages match "{query}".</div>
+          )}
+          {filtered.map((m, i) => (
             <div key={i} className="mb-3 border-l-2 border-[var(--line-bright)] pl-2.5">
               <div
                 className={cn(

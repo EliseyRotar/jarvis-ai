@@ -573,6 +573,48 @@ async def api_memory(limit: int = 200) -> dict[str, Any]:
     return await memory.list_memories(limit=limit)
 
 
+@app.post("/api/memory")
+async def api_memory_save(body: dict[str, Any]) -> dict[str, Any]:
+    """Create or update a long-term memory entry."""
+    from .tools import memory
+
+    key = str(body.get("key", "")).strip()
+    value = body.get("value")
+    tags = body.get("tags") or []
+    if not key:
+        return {"ok": False, "error": "key is required"}
+    await memory.save(key, value, tags)
+    return {"ok": True}
+
+
+@app.delete("/api/memory/{key}")
+async def api_memory_delete(key: str) -> dict[str, Any]:
+    """Delete a long-term memory entry by key."""
+    from .tools import memory
+
+    await memory.delete(key)
+    return {"ok": True}
+
+
+@app.get("/api/connectors")
+async def api_connectors() -> dict[str, Any]:
+    """List MCP connector integrations and their current (masked) configuration."""
+    from .tools import connectors
+
+    return connectors.get_connectors_status()
+
+
+@app.post("/api/connectors/{connector_id}")
+async def api_connector_update(connector_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Enable/disable and configure a single MCP connector integration."""
+    from .tools import connectors
+
+    enabled = bool(body.get("enabled"))
+    fields = body.get("fields") or {}
+    connectors.update_connector(connector_id, enabled, fields)
+    return {"ok": True}
+
+
 @app.get("/api/history")
 async def api_history() -> dict[str, Any]:
     """Read-only access to the persisted conversation log."""
