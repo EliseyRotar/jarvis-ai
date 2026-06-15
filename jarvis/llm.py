@@ -57,6 +57,42 @@ AVAILABLE_CLAUDE_MODELS = [
 
 _active_claude_model: str = DEFAULT_CLAUDE_MODEL
 
+# Persisted Claude Agent SDK session id, so a fresh process can `resume` the
+# same conversation (full context, tool history, etc.) after a restart/reboot
+# instead of starting from a blank slate.
+CLAUDE_SESSION_PATH = Path.home() / ".jarvis" / "claude_session.json"
+
+
+def _load_claude_session_id() -> str | None:
+    try:
+        if CLAUDE_SESSION_PATH.exists():
+            data = json.loads(CLAUDE_SESSION_PATH.read_text(encoding="utf-8"))
+            sid = data.get("session_id")
+            if isinstance(sid, str) and sid:
+                return sid
+    except Exception as exc:
+        log.warning("could not read claude session id: %s", exc)
+    return None
+
+
+def _save_claude_session_id(session_id: str) -> None:
+    if not session_id:
+        return
+    try:
+        CLAUDE_SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CLAUDE_SESSION_PATH.write_text(
+            json.dumps({"session_id": session_id}), encoding="utf-8"
+        )
+    except Exception as exc:
+        log.warning("could not save claude session id: %s", exc)
+
+
+def _clear_claude_session_id() -> None:
+    try:
+        CLAUDE_SESSION_PATH.unlink(missing_ok=True)
+    except Exception:
+        pass
+
 
 def get_active_model() -> str:
     return _active_claude_model
@@ -841,18 +877,37 @@ async def _get_claude_client(system_prompt: str) -> Any:
                      len(mcp_servers) - 1,
                      ", ".join(n for n in mcp_servers if n != "jarvis_tools"))
 
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            mcp_servers=mcp_servers,
-            allowed_tools=allowed,
-            model=_active_claude_model,
-            permission_mode="bypassPermissions",
-        )
+        # Resume the previous session (if one was persisted) so a process
+        # restart - reboot, app close/reopen, crash - picks the conversation
+        # back up with full prior context instead of starting cold.
+        resume_id = _load_claude_session_id()
 
-        client = ClaudeSDKClient(options=options)
-        await client.connect()
+        def _build_options(resume: str | None) -> Any:
+            return ClaudeAgentOptions(
+                system_prompt=system_prompt,
+                mcp_servers=mcp_servers,
+                allowed_tools=allowed,
+                model=_active_claude_model,
+                permission_mode="bypassPermissions",
+                resume=resume,
+            )
+
+        client = ClaudeSDKClient(options=_build_options(resume_id))
+        try:
+            await client.connect()
+        except Exception as exc:
+            if resume_id:
+                log.warning("resuming Claude session %s failed (%s), starting fresh", resume_id, exc)
+                _clear_claude_session_id()
+                client = ClaudeSDKClient(options=_build_options(None))
+                await client.connect()
+            else:
+                raise
         _claude_client = client
-        log.info("claude SDK client connected (model=%s)", _active_claude_model)
+        if resume_id:
+            log.info("claude SDK client connected (model=%s, resumed session %s)", _active_claude_model, resume_id)
+        else:
+            log.info("claude SDK client connected (model=%s)", _active_claude_model)
         return _claude_client
 
 
@@ -990,7 +1045,11 @@ async def _stream_chat_claude(
                             "elapsed_ms": int((time.time() - started) * 1000),
                         })
             elif isinstance(msg, ResultMessage):
-                # Turn complete.
+                # Turn complete - persist the session id so a process
+                # restart can resume this exact conversation.
+                sid = getattr(msg, "session_id", None)
+                if sid:
+                    _save_claude_session_id(sid)
                 break
     except Exception as exc:
         await on_event({"type": "error", "message": f"Claude stream failed: {exc}"})
@@ -1006,8 +1065,15 @@ async def _stream_chat_claude(
     return {"final_text": final_text, "messages": new_messages}
 
 
-async def reset_session() -> None:
-    """Clear any persistent Claude SDK session state (called by /reset)."""
+async def reset_session(forget: bool = False) -> None:
+    """Tear down the cached Claude SDK client.
+
+    By default the persisted session id is kept, so transient
+    reconnects (connection drops, transport hiccups) still resume the
+    same conversation on the next turn. Pass forget=True for an
+    explicit user-requested reset (/reset) that should start a brand
+    new conversation with no memory of the old one.
+    """
     global _claude_client
     async with _claude_lock:
         if _claude_client is not None:
@@ -1018,6 +1084,8 @@ async def reset_session() -> None:
             _claude_client = None
         _claude_tool_name_by_id.clear()
         _claude_pending_call_started.clear()
+    if forget:
+        _clear_claude_session_id()
 
 
 # ──────────────────────────────────────────────────────────────────────────
