@@ -11,6 +11,10 @@ build/
 *.egg
 pip-wheel-metadata/
 
+# Built React/Vite frontend output is committed so the app works out of the box.
+!jarvis/static/dist/
+!jarvis/static/dist/**
+
 # ── Secrets & environment ──────────────────────────────────────────────────
 .env
 *.env

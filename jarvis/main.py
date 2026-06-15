@@ -75,21 +75,31 @@ log = logging.getLogger("jarvis")
 
 ROOT = Path(__file__).parent
 STATIC_DIR = ROOT / "static"
+DIST_DIR = STATIC_DIR / "dist"
 # Personal prompt (gitignored) takes priority; fall back to the committed template.
 _PERSONAL_PROMPT = ROOT / "personal info jarvis" / "system_prompt.txt"
 SYSTEM_PROMPT_PATH = _PERSONAL_PROMPT if _PERSONAL_PROMPT.exists() else ROOT / "system_prompt.txt"
 HISTORY_PATH = Path.home() / ".jarvis" / "history.json"
-_MAX_HISTORY = 40  # user/assistant messages to persist across reboots
+_MAX_HISTORY = 200  # user/assistant messages to persist across reboots
 
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     """Startup/shutdown lifecycle. Startup logic lives in ``_on_startup``."""
     await _on_startup()
-    yield
+    try:
+        yield
+    finally:
+        # Persist conversation history on any graceful shutdown path
+        # (Ctrl+C, systemd/service stop, reboot signal) — not just the
+        # explicit /api/shutdown endpoint — so the next launch resumes here.
+        _save_history()
 
 
 app = FastAPI(title="JARVIS", version="1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+# New React/Vite frontend build output (jarvis/web -> jarvis/static/dist).
+if (DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(DIST_DIR / "assets")), name="dist-assets")
 
 # Enable gzip compression for responses (especially WebSocket messages)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
@@ -433,7 +443,20 @@ async def _emit(msg: dict[str, Any], send: Any) -> None:
 
 @app.get("/")
 async def index() -> FileResponse:
+    dist_index = DIST_DIR / "index.html"
+    if dist_index.exists():
+        return FileResponse(str(dist_index))
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/favicon.svg")
+async def favicon() -> FileResponse:
+    return FileResponse(str(DIST_DIR / "favicon.svg"))
+
+
+@app.get("/icons.svg")
+async def icons() -> FileResponse:
+    return FileResponse(str(DIST_DIR / "icons.svg"))
 
 
 @app.get("/healthz")
@@ -478,7 +501,7 @@ async def speak_endpoint(body: dict[str, Any]) -> dict[str, Any]:
 async def reset() -> dict[str, Any]:
     async with _lock:
         _reset_conversation()
-    await llm.reset_session()
+    await llm.reset_session(forget=True)
     await tts.cancel_speaking()
     try:
         HISTORY_PATH.unlink(missing_ok=True)
@@ -542,6 +565,20 @@ async def api_stop() -> dict[str, Any]:
     return {"ok": True, "cancelled": cancelled}
 
 
+@app.get("/api/memory")
+async def api_memory(limit: int = 200) -> dict[str, Any]:
+    """Read-only browse of long-term memory (~/.jarvis/memory.db)."""
+    from .tools import memory
+
+    return await memory.list_memories(limit=limit)
+
+
+@app.get("/api/history")
+async def api_history() -> dict[str, Any]:
+    """Read-only access to the persisted conversation log."""
+    return {"ok": True, "messages": _load_history()}
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────────────────────────────────
@@ -559,6 +596,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
     else:
         active_model = llm.DEFAULT_OR_MODEL
     await ws.send_text(json.dumps({"type": "ready", "model": active_model, "backend": backend}))
+
+    # Replay any restored/prior conversation so the UI visually resumes
+    # exactly where it left off after a reboot, app restart, or shutdown.
+    prior = [m for m in conversation if m.get("role") in ("user", "assistant")]
+    if prior:
+        await ws.send_text(json.dumps({"type": "history", "messages": prior}))
     try:
         while True:
             raw = await ws.receive_text()
@@ -591,7 +634,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
             elif mtype == "reset":
                 async with _lock:
                     _reset_conversation()
-                await llm.reset_session()
+                await llm.reset_session(forget=True)
+                try:
+                    HISTORY_PATH.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 await hub.broadcast({"type": "reset"})
             elif mtype == "stop":
                 global _current_turn_task
