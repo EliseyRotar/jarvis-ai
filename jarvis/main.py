@@ -736,6 +736,110 @@ async def api_history() -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Home Assistant API
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/home-assistant/config")
+async def api_ha_config() -> dict[str, Any]:
+    """Return current HA config (token masked)."""
+    from .tools import home_assistant as ha
+    cfg = ha.load_config()
+    token = cfg.get("token", "")
+    masked = ("*" * (len(token) - 8) + token[-8:]) if len(token) > 8 else "****"
+    return {
+        "ok": True,
+        "url": cfg.get("url", ""),
+        "token_masked": masked if token else "",
+        "configured": bool(cfg.get("url") and cfg.get("token")),
+    }
+
+
+@app.post("/api/home-assistant/config")
+async def api_ha_save_config(request: Request) -> dict[str, Any]:
+    """Save URL + token, test connection, and also update the MCP connector entry."""
+    from .tools import home_assistant as ha
+    from .tools import connectors
+
+    body = await request.json()
+    url = str(body.get("url", "")).strip().rstrip("/")
+    token = str(body.get("token", "")).strip()
+
+    if not url or not token:
+        return {"ok": False, "error": "url and token are required"}
+
+    # Test first
+    result = await ha.test_connection(url, token)
+    if not result["ok"]:
+        return result
+
+    # Save to native config
+    ha.save_config(url, token)
+
+    # Also keep MCP connector in sync
+    try:
+        connectors.update_connector(
+            "home-assistant",
+            enabled=True,
+            fields={"homeassistant_url": url, "homeassistant_token": token},
+        )
+    except Exception as exc:
+        log.warning("HA MCP connector sync failed: %s", exc)
+
+    return {**result, "ok": True, "saved": True}
+
+
+@app.post("/api/home-assistant/test")
+async def api_ha_test(request: Request) -> dict[str, Any]:
+    """Test a HA URL + token without saving."""
+    from .tools import home_assistant as ha
+
+    body = await request.json()
+    url = str(body.get("url", "")).strip()
+    token = str(body.get("token", "")).strip()
+
+    # Fall back to stored config if not provided
+    if not url or not token:
+        cfg = ha.load_config()
+        url = url or cfg.get("url", "")
+        token = token or cfg.get("token", "")
+
+    if not url or not token:
+        return {"ok": False, "error": "No URL or token provided and none stored"}
+
+    return await ha.test_connection(url, token)
+
+
+@app.get("/api/home-assistant/states")
+async def api_ha_states(request: Request) -> dict[str, Any]:
+    """Return entity states for the frontend entity browser."""
+    from .tools import home_assistant as ha
+
+    cfg = ha.load_config()
+    url = request.query_params.get("url") or cfg.get("url", "")
+    token = request.query_params.get("token") or cfg.get("token", "")
+
+    if not url or not token:
+        return {"ok": False, "error": "Home Assistant not configured"}
+
+    return await ha.get_states_for_ui(url, token)
+
+
+@app.get("/api/home-assistant/areas")
+async def api_ha_areas(request: Request) -> dict[str, Any]:
+    """Return area list for the frontend."""
+    from .tools import home_assistant as ha
+
+    cfg = ha.load_config()
+    url = request.query_params.get("url") or cfg.get("url", "")
+    token = request.query_params.get("token") or cfg.get("token", "")
+
+    if not url or not token:
+        return {"ok": False, "error": "Home Assistant not configured"}
+
+    return await ha.get_areas_for_ui(url, token)
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────────────────────────────────
 
