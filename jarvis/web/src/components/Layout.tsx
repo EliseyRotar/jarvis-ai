@@ -61,7 +61,7 @@ function TopBar() {
         </select>
         <Clock />
         <kbd className="rounded-sm border border-[var(--line-bright)] px-1.5 py-0.5 text-[10px] text-[var(--text-dim)]">
-          {navigator.platform.includes('Mac') ? '⌘K' : 'Ctrl+K'}
+          {navigator.platform.includes('Mac') ? '⌘/' : 'Ctrl+/'}
         </kbd>
       </div>
     </header>
@@ -74,7 +74,7 @@ export function Layout() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
         e.preventDefault()
         setPaletteOpen((o) => !o)
       }

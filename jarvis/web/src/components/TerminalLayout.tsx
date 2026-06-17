@@ -39,7 +39,7 @@ export function TerminalLayout() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
         e.preventDefault()
         setPaletteOpen((o) => !o)
       }

@@ -655,7 +655,7 @@ export function SettingsPage() {
           <div>JARVIS — Just A Rather Very Intelligent System</div>
           <div>Web UI v2 — React 19 / Vite / Tailwind 4</div>
           <div>
-            Keyboard shortcut: <kbd className="rounded-sm border border-[var(--line-bright)] px-1.5 py-0.5 text-[10px]">Ctrl/Cmd+K</kbd> opens the command palette.
+            Keyboard shortcut: <kbd className="rounded-sm border border-[var(--line-bright)] px-1.5 py-0.5 text-[10px]">Ctrl/Cmd+/</kbd> opens the command palette.
           </div>
         </div>
       </section>
