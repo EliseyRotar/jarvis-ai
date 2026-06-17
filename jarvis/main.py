@@ -615,6 +615,49 @@ async def api_connector_update(connector_id: str, body: dict[str, Any]) -> dict[
     return {"ok": True}
 
 
+@app.get("/api/channels/telegram")
+async def api_telegram_status() -> dict[str, Any]:
+    """Return Telegram bot connection status."""
+    from .channels import telegram_bot as tb
+
+    cfg = tb.load_config()
+    return {
+        "ok": True,
+        "connected": bool(cfg.get("token")),
+        "username": cfg.get("username", ""),
+        "first_name": cfg.get("first_name", ""),
+    }
+
+
+@app.post("/api/channels/telegram/connect")
+async def api_telegram_connect(request: Request) -> dict[str, Any]:
+    """Verify a Telegram bot token and save it."""
+    from .channels import telegram_bot as tb
+
+    body = await request.json()
+    token = str(body.get("token", "")).strip()
+    if not token:
+        return {"ok": False, "error": "Token is required"}
+    info = await tb.get_bot_info(token)
+    if not info.get("ok"):
+        return {"ok": False, "error": info.get("error", "Invalid token")}
+    tb.save_config({
+        "token": token,
+        "username": info["username"],
+        "first_name": info["first_name"],
+    })
+    return {"ok": True, "username": info["username"], "first_name": info["first_name"]}
+
+
+@app.post("/api/channels/telegram/disconnect")
+async def api_telegram_disconnect() -> dict[str, Any]:
+    """Remove the saved Telegram bot config."""
+    from .channels import telegram_bot as tb
+
+    tb.save_config({})
+    return {"ok": True}
+
+
 @app.get("/api/hardware")
 async def api_hardware() -> dict[str, Any]:
     """Return detected hardware info, Ollama status, installed models, and recommendations."""
