@@ -32,41 +32,152 @@ def _field(name: str, label: str, type_: str = "text", required: bool = True, pl
 
 
 # Each connector entry describes:
-#   id          server key used in mcpServers (and the connector id for the API)
-#   label       human readable name
-#   description short description
-#   fields      list of field descriptors (name/label/type/required)
+#   id              server key used in mcpServers (and the connector id for the API)
+#   label           human readable name
+#   description     short description
+#   category        logical group: communication/knowledge/developer/productivity/lifestyle/infrastructure
+#   fields          list of field descriptors (name/label/type/required)
+#   available_soon  (optional) true if the MCP implementation is not yet ready — UI shows "Coming soon"
 CONNECTORS: list[dict[str, Any]] = [
+    # ── Communication ────────────────────────────────────────────────────────
     {
         "id": "whatsapp",
         "label": "WhatsApp",
-        "description": "WhatsApp bridge (QR pairing) for sending/reading messages.",
-        "fields": [],
-    },
-    {
-        "id": "playwright",
-        "label": "Playwright",
-        "description": "Browser automation (navigate, click, screenshot pages).",
+        "description": "Send and receive WhatsApp messages via a QR-paired bridge.",
+        "category": "communication",
         "fields": [],
     },
     {
         "id": "gmail",
         "label": "Gmail",
         "description": "Read and send email via Gmail (OAuth handled on first use).",
+        "category": "communication",
         "fields": [],
     },
     {
-        "id": "elevenlabs",
-        "label": "ElevenLabs",
-        "description": "High-quality text-to-speech voices via ElevenLabs.",
+        "id": "slack",
+        "label": "Slack",
+        "description": "Read messages from Slack channels, DMs, and group DMs.",
+        "category": "communication",
         "fields": [
-            _field("elevenlabs_key", "API Key", "password"),
+            _field("slack_token", "Bot Token (xoxb-...)", "password"),
+        ],
+    },
+    {
+        "id": "meta-ads",
+        "label": "Meta Ads",
+        "description": "Manage Meta (Facebook/Instagram) ad campaigns.",
+        "category": "communication",
+        "fields": [],
+    },
+    # ── Knowledge ────────────────────────────────────────────────────────────
+    {
+        "id": "notion",
+        "label": "Notion",
+        "description": "Read and write Notion pages and databases.",
+        "category": "knowledge",
+        "fields": [
+            _field("notion_token", "Integration Token", "password"),
+        ],
+    },
+    {
+        "id": "obsidian",
+        "label": "Obsidian",
+        "description": "Read notes from your local Obsidian vault.",
+        "category": "knowledge",
+        "fields": [
+            _field("obsidian_vault_path", "Vault Path", "text"),
+        ],
+        "available_soon": True,
+    },
+    {
+        "id": "gdrive",
+        "label": "Google Drive",
+        "description": "Access Docs, Sheets, and files from Google Drive (requires Google OAuth setup).",
+        "category": "knowledge",
+        "fields": [],
+        "available_soon": True,
+    },
+    {
+        "id": "todoist",
+        "label": "Todoist",
+        "description": "Manage tasks and projects in Todoist.",
+        "category": "knowledge",
+        "fields": [],
+    },
+    {
+        "id": "mem0",
+        "label": "Mem0",
+        "description": "Long-term memory store via Mem0.",
+        "category": "knowledge",
+        "fields": [
+            _field("mem0_key", "API Key", "password"),
+        ],
+    },
+    # ── Developer ────────────────────────────────────────────────────────────
+    {
+        "id": "github",
+        "label": "GitHub",
+        "description": "Manage repos, issues, and pull requests on GitHub.",
+        "category": "developer",
+        "fields": [
+            _field("github_token", "Personal Access Token", "password"),
+        ],
+    },
+    {
+        "id": "playwright",
+        "label": "Playwright",
+        "description": "Automate browser navigation, clicks, and screenshots.",
+        "category": "developer",
+        "fields": [],
+    },
+    {
+        "id": "exa",
+        "label": "Exa",
+        "description": "AI-optimised web search via Exa.",
+        "category": "developer",
+        "fields": [
+            _field("exa_key", "API Key", "password"),
+        ],
+    },
+    # ── Productivity ─────────────────────────────────────────────────────────
+    {
+        "id": "google-calendar",
+        "label": "Google Calendar",
+        "description": "Read and manage events on Google Calendar.",
+        "category": "productivity",
+        "fields": [],
+    },
+    {
+        "id": "google-contacts",
+        "label": "Google Contacts",
+        "description": "Look up people and contact info from Google Contacts (requires Google OAuth).",
+        "category": "productivity",
+        "fields": [],
+        "available_soon": True,
+    },
+    {
+        "id": "google-tasks",
+        "label": "Google Tasks",
+        "description": "Manage tasks and to-do lists via Google Tasks (shares Google OAuth credentials).",
+        "category": "productivity",
+        "fields": [],
+        "available_soon": True,
+    },
+    {
+        "id": "stripe",
+        "label": "Stripe",
+        "description": "Manage payments, customers, and subscriptions via Stripe.",
+        "category": "productivity",
+        "fields": [
+            _field("stripe_key", "API Key (Secret Key)", "password"),
         ],
     },
     {
         "id": "revenuecat",
         "label": "RevenueCat",
         "description": "Subscription and revenue analytics via RevenueCat.",
+        "category": "productivity",
         "fields": [
             _field("revenuecat_key", "API Key", "password"),
         ],
@@ -75,76 +186,60 @@ CONNECTORS: list[dict[str, Any]] = [
         "id": "postiz",
         "label": "Postiz",
         "description": "Social media scheduling and posting via Postiz.",
+        "category": "productivity",
         "fields": [
             _field("postiz_url", "Postiz URL", "text", required=False, placeholder="http://localhost:5000"),
             _field("postiz_key", "API Key", "password"),
         ],
     },
+    # ── Lifestyle ────────────────────────────────────────────────────────────
     {
-        "id": "meta-ads",
-        "label": "Meta Ads",
-        "description": "Manage Meta (Facebook/Instagram) ad campaigns.",
-        "fields": [],
+        "id": "spotify",
+        "label": "Spotify",
+        "description": "Browse your listening history and playlists via Spotify.",
+        "category": "lifestyle",
+        "fields": [
+            _field("spotify_client_id", "Client ID", "text"),
+            _field("spotify_client_secret", "Client Secret", "password"),
+        ],
+        "available_soon": True,
     },
     {
-        "id": "google-calendar",
-        "label": "Google Calendar",
-        "description": "Read and manage events on Google Calendar.",
-        "fields": [],
+        "id": "weather",
+        "label": "Weather",
+        "description": "Fetch current weather conditions and forecasts.",
+        "category": "lifestyle",
+        "fields": [
+            _field("weather_api_key", "OpenWeatherMap API Key", "password", required=False),
+        ],
+        "available_soon": True,
     },
+    {
+        "id": "hackernews",
+        "label": "Hacker News",
+        "description": "Browse top stories and comments from Hacker News.",
+        "category": "lifestyle",
+        "fields": [],
+        "available_soon": True,
+    },
+    # ── Infrastructure ───────────────────────────────────────────────────────
     {
         "id": "home-assistant",
         "label": "Home Assistant",
         "description": "Control smart-home devices via Home Assistant.",
+        "category": "infrastructure",
         "fields": [
             _field("homeassistant_url", "Home Assistant URL", "text", required=False, placeholder="http://homeassistant.local:8123"),
             _field("homeassistant_token", "Long-Lived Access Token", "password"),
         ],
     },
     {
-        "id": "exa",
-        "label": "Exa",
-        "description": "AI-optimized web search via Exa.",
+        "id": "elevenlabs",
+        "label": "ElevenLabs",
+        "description": "High-quality text-to-speech voices via ElevenLabs.",
+        "category": "infrastructure",
         "fields": [
-            _field("exa_key", "API Key", "password"),
-        ],
-    },
-    {
-        "id": "github",
-        "label": "GitHub",
-        "description": "Manage repos, issues, and pull requests on GitHub.",
-        "fields": [
-            _field("github_token", "Personal Access Token", "password"),
-        ],
-    },
-    {
-        "id": "notion",
-        "label": "Notion",
-        "description": "Read and write Notion pages and databases.",
-        "fields": [
-            _field("notion_token", "Integration Token", "password"),
-        ],
-    },
-    {
-        "id": "todoist",
-        "label": "Todoist",
-        "description": "Manage tasks and projects in Todoist.",
-        "fields": [],
-    },
-    {
-        "id": "mem0",
-        "label": "Mem0",
-        "description": "Long-term memory store via Mem0.",
-        "fields": [
-            _field("mem0_key", "API Key", "password"),
-        ],
-    },
-    {
-        "id": "stripe",
-        "label": "Stripe",
-        "description": "Manage payments, customers, and subscriptions via Stripe.",
-        "fields": [
-            _field("stripe_key", "API Key (Secret Key)", "password"),
+            _field("elevenlabs_key", "API Key", "password"),
         ],
     },
 ]
@@ -215,6 +310,20 @@ def _extract_value(server: dict[str, Any], field_name: str) -> str:
         return env.get("MEM0_API_KEY", "")
     if field_name == "stripe_key":
         return bearer
+    if field_name == "slack_token":
+        return env.get("SLACK_BOT_TOKEN", "")
+    if field_name == "obsidian_vault_path":
+        args = server.get("args", [])
+        # mcp-obsidian: npx -y mcp-obsidian <vault_path>
+        if args and len(args) >= 3 and args[1] == "mcp-obsidian":
+            return args[-1]
+        return ""
+    if field_name == "spotify_client_id":
+        return env.get("SPOTIFY_CLIENT_ID", "")
+    if field_name == "spotify_client_secret":
+        return env.get("SPOTIFY_CLIENT_SECRET", "")
+    if field_name == "weather_api_key":
+        return env.get("OPENWEATHERMAP_API_KEY", "")
     return ""
 
 
@@ -239,6 +348,8 @@ def get_connectors_status() -> dict[str, Any]:
                 "id": c["id"],
                 "label": c["label"],
                 "description": c["description"],
+                "category": c.get("category", ""),
+                "available_soon": c.get("available_soon", False),
                 "fields": c["fields"],
                 "enabled": enabled,
                 "values": values,
@@ -323,6 +434,52 @@ def _build_server_entry(connector_id: str, fields: dict[str, str]) -> dict[str, 
             "type": "http",
             "url": "https://mcp.stripe.com",
             "headers": {"Authorization": f"Bearer {get('stripe_key')}"},
+        }
+    if connector_id == "slack":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-slack"],
+            "env": {"SLACK_BOT_TOKEN": get("slack_token")},
+        }
+    if connector_id == "obsidian":
+        return {
+            "command": "npx",
+            "args": ["-y", "mcp-obsidian", get("obsidian_vault_path")],
+        }
+    if connector_id == "gdrive":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-gdrive"],
+        }
+    if connector_id == "google-contacts":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-google-contacts"],
+        }
+    if connector_id == "google-tasks":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-google-tasks"],
+        }
+    if connector_id == "spotify":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-spotify"],
+            "env": {
+                "SPOTIFY_CLIENT_ID": get("spotify_client_id"),
+                "SPOTIFY_CLIENT_SECRET": get("spotify_client_secret"),
+            },
+        }
+    if connector_id == "weather":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-weather"],
+            "env": {"OPENWEATHERMAP_API_KEY": get("weather_api_key")},
+        }
+    if connector_id == "hackernews":
+        return {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-hackernews"],
         }
     raise ValueError(f"unknown connector: {connector_id}")
 
