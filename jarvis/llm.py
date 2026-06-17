@@ -360,6 +360,136 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    # ── Home Assistant ───────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "ha_get_states",
+            "description": (
+                "Get Home Assistant entity states. "
+                "Filter by 'domain' (light, switch, climate, sensor, binary_sensor, "
+                "media_player, cover, automation, scene, script, etc.) "
+                "and/or 'area' (room name like 'living room' or 'bedroom')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Entity domain: light, switch, climate, sensor, media_player, cover, etc.",
+                    },
+                    "area": {
+                        "type": "string",
+                        "description": "Room/area name to filter by (e.g. 'living room').",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ha_call_service",
+            "description": (
+                "Call any Home Assistant service to control smart home devices. "
+                "Examples: turn lights on/off (domain='light', service='turn_on', entity_id='light.living_room', service_data={'brightness_pct':80}), "
+                "set climate temperature (domain='climate', service='set_temperature', entity_id='climate.thermostat', service_data={'temperature':21}), "
+                "control media players, trigger automations, activate scenes, control covers/blinds."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Service domain: light, switch, climate, cover, media_player, automation, scene, script, homeassistant, input_boolean, etc.",
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Service name: turn_on, turn_off, toggle, set_temperature, set_hvac_mode, volume_set, trigger, etc.",
+                    },
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Target entity ID, e.g. 'light.living_room' or 'climate.thermostat'. Use ha_search_entities to find the right ID.",
+                    },
+                    "service_data": {
+                        "type": "object",
+                        "description": (
+                            "Extra service parameters. Examples: "
+                            "light: {brightness_pct:80, color_temp_kelvin:3000, transition:2, rgb_color:[255,100,0]}; "
+                            "climate: {temperature:21.0, hvac_mode:'heat'}; "
+                            "media_player: {volume_level:0.5}; "
+                            "cover: {position:50}."
+                        ),
+                    },
+                    "area_id": {
+                        "type": "string",
+                        "description": "Area ID to target all entities in a room. Use ha_get_areas to find area IDs.",
+                    },
+                },
+                "required": ["domain", "service"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ha_search_entities",
+            "description": (
+                "Search Home Assistant entities by name or entity_id. "
+                "Use this to find the correct entity_id before calling ha_call_service."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query (partial match on friendly_name or entity_id).",
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Limit search to a specific domain (optional).",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ha_get_areas",
+            "description": (
+                "Get all areas/rooms defined in Home Assistant with their entity counts. "
+                "Use this to find area IDs for ha_call_service."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "include_entities": {
+                        "type": "boolean",
+                        "description": "Include entity IDs for each area (default true).",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ha_render_template",
+            "description": (
+                "Render a Home Assistant Jinja2 template. "
+                "Use for complex queries: state calculations, area lookups, device info, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template": {"type": "string", "description": "Jinja2 template string."},
+                },
+                "required": ["template"],
+            },
+        },
+    },
 ]
 
 
@@ -431,6 +561,36 @@ async def _dispatch_tool_inner(name: str, args: dict[str, Any]) -> dict[str, Any
                 from .main import _detect_text_language
                 lang = _detect_text_language(text)
             return await tts_module.speak(text, lang=lang)
+        # ── Home Assistant ───────────────────────────────────────────────────
+        if name == "ha_get_states":
+            from .tools import home_assistant as ha
+            return await ha.get_states(
+                domain=args.get("domain"),
+                area=args.get("area"),
+            )
+        if name == "ha_call_service":
+            from .tools import home_assistant as ha
+            return await ha.call_service(
+                domain=args["domain"],
+                service=args["service"],
+                entity_id=args.get("entity_id"),
+                service_data=args.get("service_data") or {},
+                area_id=args.get("area_id"),
+            )
+        if name == "ha_search_entities":
+            from .tools import home_assistant as ha
+            return await ha.search_entities(
+                query=args["query"],
+                domain=args.get("domain"),
+            )
+        if name == "ha_get_areas":
+            from .tools import home_assistant as ha
+            return await ha.get_areas(
+                include_entities=bool(args.get("include_entities", True)),
+            )
+        if name == "ha_render_template":
+            from .tools import home_assistant as ha
+            return await ha.render_template(args["template"])
         return {"ok": False, "error": f"unknown tool: {name}"}
     except KeyError as missing:
         return {"ok": False, "error": f"missing required arg: {missing}"}
