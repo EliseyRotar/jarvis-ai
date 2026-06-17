@@ -3,6 +3,7 @@ import { Download, Power, RotateCcw, Square } from 'lucide-react'
 import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvisStore'
 import { cn } from '@/lib/utils'
 import { getTheme, setTheme, type Theme } from '@/lib/theme'
+import { savePersona, type Persona } from '@/lib/persona'
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'light', label: 'LIGHT' },
@@ -443,6 +444,19 @@ export function SettingsPage() {
     setThemeState(t)
   }
 
+  const persona = useJarvisStore((s) => s.persona)
+  const setPersonaLocal = useJarvisStore((s) => s.setPersona)
+  const choosePersona = async (p: Persona) => {
+    setPersonaLocal(p)
+    await savePersona(p)
+    pushToast(
+      p === 'eli6'
+        ? 'persona: eli6 — terminal mode, direct tone applies on next turn'
+        : 'Persona: JARVIS — HUD mode, formal tone applies on next turn',
+      'ok',
+    )
+  }
+
   useEffect(() => {
     loadModels()
   }, [])
@@ -461,6 +475,86 @@ export function SettingsPage() {
 
   return (
     <div className="flex h-full flex-col gap-3.5 overflow-y-auto p-3.5">
+      <section className="hud-panel shrink-0">
+        <div className="hud-panel-head">
+          <h3>Persona</h3>
+          <span className="hud-tag">{persona === 'eli6' ? 'eli6' : 'jarvis'}</span>
+        </div>
+        <div className="p-3.5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* JARVIS preview card */}
+            <button
+              type="button"
+              onClick={() => choosePersona('jarvis')}
+              className={cn(
+                'group relative overflow-hidden rounded-sm border p-3 text-left transition',
+                persona === 'jarvis'
+                  ? 'border-[var(--blue)] shadow-[0_0_12px_var(--blue-glow)]'
+                  : 'border-[var(--line-bright)] hover:border-[var(--blue)]',
+              )}
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-display text-[13px] tracking-[0.3em] text-[var(--blue)]">JARVIS</span>
+                {persona === 'jarvis' && (
+                  <span className="rounded-sm border border-[var(--blue)] px-1.5 py-0.5 font-mono text-[9px] tracking-[0.15em] text-[var(--blue)]">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <div
+                className="mb-2 flex h-24 flex-col gap-1 rounded-sm border border-[#1b3046] p-2"
+                style={{ background: '#090c10', fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                <div className="text-[8px] uppercase tracking-[0.3em] text-[#6a7d92]">THINKING / RESPONSE / ACTIONS</div>
+                <div className="text-[10px] text-[#00c8ff]">▎sir, system online.</div>
+                <div className="text-[9px] text-[#6a7d92]">[tool] bash_exec → ls /home</div>
+              </div>
+              <div className="text-[11px] text-[var(--text-dim)]">
+                multi-panel HUD · cyan + amber · formal British butler tone
+              </div>
+            </button>
+
+            {/* ELI6 preview card */}
+            <button
+              type="button"
+              onClick={() => choosePersona('eli6')}
+              className={cn(
+                'group relative overflow-hidden rounded-sm border p-3 text-left transition',
+                persona === 'eli6'
+                  ? 'border-[#ffb300] shadow-[0_0_12px_rgba(255,179,0,0.55)]'
+                  : 'border-[var(--line-bright)] hover:border-[#ffb300]',
+              )}
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span style={{ fontFamily: "'VT323', monospace", fontSize: '20px', lineHeight: 1 }} className="text-[#ffb300]">
+                  eli6
+                </span>
+                {persona === 'eli6' && (
+                  <span className="rounded-sm border border-[#ffb300] px-1.5 py-0.5 font-mono text-[9px] tracking-[0.15em] text-[#ffb300]">
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <div
+                className="mb-2 flex h-24 flex-col gap-0.5 rounded-sm border border-[#2a1a00] p-2 text-[10px] text-[#ffb300]"
+                style={{ background: '#000000', fontFamily: "'IBM Plex Mono', monospace" }}
+              >
+                <div><span className="text-[#ff6a00]">{'>'}</span> hey</div>
+                <div><span className="text-[#b07a00]">·</span> what's up</div>
+                <div className="text-[9px] text-[#b07a00]">[done] bash_exec → ls</div>
+                <div className="mt-auto text-[9px] text-[#5a3d00]">READY · model sonnet · 02:14</div>
+              </div>
+              <div className="text-[11px] text-[var(--text-dim)]">
+                single-pane terminal · amber CRT · direct co-founder tone
+              </div>
+            </button>
+          </div>
+          <div className="mt-2.5 text-[10px] text-[var(--text-faint)]">
+            UI changes instantly. New tone applies on the next turn.
+          </div>
+        </div>
+      </section>
+
       <section className="hud-panel shrink-0">
         <div className="hud-panel-head">
           <h3>Model</h3>

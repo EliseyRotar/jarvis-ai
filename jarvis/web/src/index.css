@@ -115,6 +115,89 @@
   background: radial-gradient(circle at 50% 35%, #f6f9fc 0%, #dfe6ed 75%);
 }
 
+/* ────────────────────────────────────────────────────────────────────────
+   ELI6 persona — warm amber CRT terminal aesthetic
+   ──────────────────────────────────────────────────────────────────────── */
+:root.persona-eli6 {
+  --bg: #000000;
+  --bg-elev: #0a0500;
+  --bg-elev-2: #140a00;
+  --line: #2a1a00;
+  --line-bright: #4a2f00;
+  --text: #ffb300;
+  --text-dim: #b07a00;
+  --text-faint: #5a3d00;
+
+  --blue: #ffb300;
+  --blue-dim: #b07a00;
+  --blue-glow: rgba(255, 179, 0, 0.55);
+
+  --amber: #ff6a00;
+  --amber-glow: rgba(255, 106, 0, 0.65);
+
+  --green: #ffb300;
+  --red: #ff3030;
+  --red-glow: rgba(255, 48, 48, 0.6);
+
+  --display: 'VT323', 'IBM Plex Mono', monospace;
+  --mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--bg-elev);
+  --card-foreground: var(--text);
+  --popover: var(--bg-elev);
+  --popover-foreground: var(--text);
+  --primary: var(--text);
+  --primary-foreground: #000000;
+  --secondary: var(--bg-elev-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--bg-elev-2);
+  --muted-foreground: var(--text-dim);
+  --accent: var(--bg-elev-2);
+  --accent-foreground: var(--text);
+  --destructive: var(--red);
+  --border: var(--line);
+  --input: var(--line-bright);
+  --ring: var(--blue-dim);
+  color-scheme: dark;
+}
+
+:root.persona-eli6 body {
+  background: #000000;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--text);
+}
+
+:root.persona-eli6 .scanlines { opacity: 0.5; }
+:root.persona-eli6 .vignette { background: radial-gradient(circle at 50% 50%, transparent 40%, rgba(0,0,0,0.85) 100%); }
+
+@keyframes crt-flicker {
+  0%, 96%, 100% { opacity: 1; }
+  97% { opacity: 0.96; }
+  98% { opacity: 1; }
+  99% { opacity: 0.97; }
+}
+:root.persona-eli6 #root { animation: crt-flicker 6s infinite; }
+
+@keyframes crt-cursor {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+.crt-cursor { animation: crt-cursor 1s steps(1, end) infinite; display: inline-block; }
+
+/* In ELI6 mode, neutralize the HUD panel corner brackets — they read as too sci-fi. */
+:root.persona-eli6 .hud-panel::before,
+:root.persona-eli6 .hud-panel::after { display: none; }
+:root.persona-eli6 .hud-panel { border-radius: 0; }
+:root.persona-eli6 .hud-panel-head h2,
+:root.persona-eli6 .hud-panel-head h3 {
+  font-family: var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: lowercase;
+}
+:root.persona-eli6 .hud-panel-head { background: transparent; }
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

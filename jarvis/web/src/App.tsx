@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route } from 'react-router'
-import { connectWebSocket } from '@/store/jarvisStore'
+import { connectWebSocket, useJarvisStore } from '@/store/jarvisStore'
+import { loadPersona, applyPersonaClass } from '@/lib/persona'
 import { Layout } from '@/components/Layout'
 import { BootSplash } from '@/components/BootSplash'
 import { ChatPage } from '@/pages/ChatPage'
@@ -13,10 +14,15 @@ import { ConnectorsPage } from '@/pages/ConnectorsPage'
 
 function App() {
   const [booted, setBooted] = useState(false)
+  const setPersona = useJarvisStore((s) => s.setPersona)
 
   useEffect(() => {
     connectWebSocket()
-  }, [])
+    loadPersona().then((p) => {
+      applyPersonaClass(p)
+      setPersona(p)
+    })
+  }, [setPersona])
 
   return (
     <>

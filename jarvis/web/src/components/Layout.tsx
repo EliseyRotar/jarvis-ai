@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar'
 import { CommandPalette } from './CommandPalette'
 import { Toasts } from './Toasts'
 import { SystemPulse } from './SystemPulse'
+import { TerminalLayout } from './TerminalLayout'
 import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvisStore'
 
 function Clock() {
@@ -69,6 +70,7 @@ function TopBar() {
 
 export function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const persona = useJarvisStore((s) => s.persona)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -80,6 +82,8 @@ export function Layout() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  if (persona === 'eli6') return <TerminalLayout />
 
   return (
     <div className="flex h-full w-full">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Send, Square } from 'lucide-react'
 import { useJarvisStore } from '@/store/jarvisStore'
+import { TerminalChatPage } from './TerminalChatPage'
 import { Reactor } from '@/components/Reactor'
 import { MarkdownBlock, LiveResponse } from '@/components/MessageBubble'
 import { ToolCallCard } from '@/components/ToolCallCard'
@@ -194,6 +195,8 @@ function Composer() {
 
 export function ChatPage() {
   const task = useJarvisStore((s) => s.task)
+  const persona = useJarvisStore((s) => s.persona)
+  if (persona === 'eli6') return <TerminalChatPage />
   return (
     <div className="grid h-full grid-cols-1 gap-3.5 p-3.5 lg:grid-cols-[1fr_1.15fr_1fr]">
       <ThinkPanel />
