@@ -144,11 +144,18 @@ class _MCPServer:
                 await self._run_stdio()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except BaseException as exc:
+            # Catches both plain Exception AND anyio/Python-3.11+ ExceptionGroup
+            # ("unhandled errors in a TaskGroup") that the MCP SDK raises on connect failure.
+            msg = str(exc)
+            # Unwrap ExceptionGroup to get the first real sub-exception message
+            subs = getattr(exc, "exceptions", None)
+            if subs:
+                msg = "; ".join(str(e) for e in subs[:3])
             if not self._ready.is_set():
-                self._error = str(exc)
+                self._error = msg
                 self._ready.set()
-            log.error("[mcp:%s] connection closed: %s", self.name, exc)
+            log.error("[mcp:%s] connection closed: %s", self.name, msg)
 
     async def _run_stdio(self) -> None:
         try:
