@@ -591,6 +591,12 @@ async def _dispatch_tool_inner(name: str, args: dict[str, Any]) -> dict[str, Any
         if name == "ha_render_template":
             from .tools import home_assistant as ha
             return await ha.render_template(args["template"])
+        # ── MCP fallback ──────────────────────────────────────────────────────
+        # If no native tool matched, try MCP servers (any model backend).
+        from . import mcp_manager
+        mcp_result = await mcp_manager.dispatch(name, args)
+        if mcp_result is not None:
+            return mcp_result
         return {"ok": False, "error": f"unknown tool: {name}"}
     except KeyError as missing:
         return {"ok": False, "error": f"missing required arg: {missing}"}
@@ -792,6 +798,10 @@ async def _stream_chat_openai_compatible(
     convo = list(messages)
     final_text_chunks: list[str] = []
 
+    # Merge static native schemas with dynamically discovered MCP tool schemas
+    from . import mcp_manager as _mcp_mod
+    all_tool_schemas = TOOL_SCHEMAS + _mcp_mod.get_schemas()
+
     timeout = aiohttp.ClientTimeout(total=600, sock_read=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for hop in range(max_hops):
@@ -802,7 +812,7 @@ async def _stream_chat_openai_compatible(
             finish_reason: str | None = None
 
             try:
-                async for choice in _stream_completion(session, url, api_key, model, convo, TOOL_SCHEMAS):
+                async for choice in _stream_completion(session, url, api_key, model, convo, all_tool_schemas):
                     delta = choice.get("delta") or {}
                     if "content" in delta and delta["content"]:
                         chunk = delta["content"]

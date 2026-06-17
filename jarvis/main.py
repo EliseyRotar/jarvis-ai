@@ -93,6 +93,12 @@ async def lifespan(app: "FastAPI"):
         # (Ctrl+C, systemd/service stop, reboot signal) — not just the
         # explicit /api/shutdown endpoint — so the next launch resumes here.
         _save_history()
+        # Cleanly disconnect all MCP servers
+        try:
+            from . import mcp_manager
+            await mcp_manager.stop()
+        except Exception as _mcp_exc:
+            log.warning("MCP shutdown error: %s", _mcp_exc)
 
 
 app = FastAPI(title="JARVIS", version="1.0", lifespan=lifespan)
@@ -840,6 +846,21 @@ async def api_ha_areas(request: Request) -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# MCP status endpoint
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/mcp/status")
+async def api_mcp_status() -> dict[str, Any]:
+    """Return MCP server connection status and available tool counts."""
+    from . import mcp_manager
+    mgr = mcp_manager.get_manager()
+    if mgr is None:
+        return {"ok": False, "error": "MCP manager not started", "servers": {}}
+    return {"ok": True, **mgr.status()}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -1133,6 +1154,15 @@ async def _on_startup() -> None:
         log.warning("JARVIS online but NO LLM CREDENTIALS — set CLAUDE_CODE_OAUTH_TOKEN or OPENROUTER_API_KEY in ~/.jarvis/.env")
     if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") and os.environ.get("ANTHROPIC_API_KEY"):
         log.warning("ANTHROPIC_API_KEY is set and will shadow your OAuth token — usage will hit API budget, not your Pro plan. unset it.")
+
+    # Start MCP connector manager — makes all connectors (WhatsApp, Gmail,
+    # Playwright, ElevenLabs, Meta Ads, HA MCP) available to every LLM backend.
+    try:
+        from . import mcp_manager
+        await mcp_manager.start()
+    except Exception as exc:
+        log.warning("MCP manager failed to start: %s", exc)
+
     # Restore previous session history
     prev = _load_history()
     if prev:
