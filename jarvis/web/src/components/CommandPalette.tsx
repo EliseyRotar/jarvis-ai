@@ -11,6 +11,7 @@ import {
   Square,
   Power,
   Cpu,
+  Plug,
 } from 'lucide-react'
 import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvisStore'
 
@@ -45,6 +46,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: 'nav-tasks', label: 'Go to Tasks', group: 'Navigate', icon: ListChecks, action: () => navigate('/tasks') },
       { id: 'nav-memory', label: 'Go to Memory', group: 'Navigate', icon: Database, action: () => navigate('/memory') },
       { id: 'nav-logs', label: 'Go to Logs', group: 'Navigate', icon: ScrollText, action: () => navigate('/logs') },
+      { id: 'nav-connectors', label: 'Go to Connectors', group: 'Navigate', icon: Plug, action: () => navigate('/connectors') },
       { id: 'nav-settings', label: 'Go to Settings', group: 'Navigate', icon: Settings, action: () => navigate('/settings') },
     ]
     const actions = [

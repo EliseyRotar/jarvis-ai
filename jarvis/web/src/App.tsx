@@ -9,6 +9,7 @@ import { TasksPage } from '@/pages/TasksPage'
 import { MemoryPage } from '@/pages/MemoryPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { LogsPage } from '@/pages/LogsPage'
+import { ConnectorsPage } from '@/pages/ConnectorsPage'
 
 function App() {
   const [booted, setBooted] = useState(false)
@@ -27,6 +28,7 @@ function App() {
           <Route path="tasks" element={<TasksPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="logs" element={<LogsPage />} />
+          <Route path="connectors" element={<ConnectorsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>
       </Routes>

@@ -57,7 +57,7 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
@@ -612,6 +612,56 @@ async def api_connector_update(connector_id: str, body: dict[str, Any]) -> dict[
     enabled = bool(body.get("enabled"))
     fields = body.get("fields") or {}
     connectors.update_connector(connector_id, enabled, fields)
+    return {"ok": True}
+
+
+@app.get("/api/hardware")
+async def api_hardware() -> dict[str, Any]:
+    """Return detected hardware info, Ollama status, installed models, and recommendations."""
+    from .tools import ollama_manager as om
+
+    loop = asyncio.get_event_loop()
+    cpu = om.detect_cpu()
+    ram = om.detect_ram_gb()
+    gpu = await loop.run_in_executor(None, om.detect_gpu)
+    running = await om.ollama_running()
+    installed = await om.list_installed_models() if running else []
+    recs = om.get_recommendations(gpu["vram_gb"], ram)
+    return {
+        "ok": True,
+        "cpu": cpu,
+        "ram_gb": round(ram, 1),
+        "gpu": gpu,
+        "ollama_running": running,
+        "installed_models": installed,
+        "recommended_models": recs,
+    }
+
+
+@app.post("/api/ollama/pull")
+async def api_ollama_pull(request: Request) -> Any:
+    """Stream Ollama model pull progress as NDJSON lines."""
+    from starlette.responses import StreamingResponse
+    from .tools import ollama_manager as om
+
+    body = await request.json()
+    model = body.get("model", "")
+
+    async def _gen():
+        async for line in om.stream_pull(model):
+            yield line + "\n"
+
+    return StreamingResponse(_gen(), media_type="text/plain")
+
+
+@app.post("/api/ollama/set_model")
+async def api_ollama_set_model(request: Request) -> dict[str, Any]:
+    """Switch JARVIS's active LLM backend to a local Ollama model."""
+    from .tools import ollama_manager as om
+
+    body = await request.json()
+    model = body.get("model", "")
+    await om.set_ollama_model(model)
     return {"ok": True}
 
 
