@@ -214,10 +214,13 @@ def _memory_context_block(limit: int = 8) -> str:
 
 
 def _load_system_prompt() -> str:
+    from .persona import get_system_prompt
     if SYSTEM_PROMPT_PATH.exists():
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8") + _memory_context_block()
-    log.warning("system_prompt.txt not found, using fallback")
-    return "You are JARVIS, a helpful Arch Linux system assistant." + _memory_context_block()
+        base = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8") + _memory_context_block()
+    else:
+        log.warning("system_prompt.txt not found, using fallback")
+        base = "You are JARVIS, a helpful Arch Linux system assistant." + _memory_context_block()
+    return get_system_prompt(base)
 
 
 def _save_history() -> None:
@@ -594,6 +597,24 @@ async def api_memory_delete(key: str) -> dict[str, Any]:
 
     await memory.delete(key)
     return {"ok": True}
+
+
+@app.get("/api/persona")
+async def api_get_persona() -> dict[str, Any]:
+    """Return the active persona ('jarvis' or 'eli6')."""
+    from . import persona
+    return {"ok": True, "persona": persona.get_persona()}
+
+
+@app.post("/api/persona")
+async def api_set_persona(body: dict[str, Any]) -> dict[str, Any]:
+    """Switch persona. Affects system prompt on next turn + frontend UI immediately."""
+    from . import persona
+    try:
+        persona.set_persona(body.get("persona", ""))
+        return {"ok": True, "persona": body.get("persona")}
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.get("/api/connectors")

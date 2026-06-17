@@ -52,6 +52,8 @@ export type TurnMeta = {
   num_turns?: number
 }
 
+import type { Persona } from '@/lib/persona'
+
 interface JarvisState {
   connected: boolean
   ready: boolean
@@ -70,6 +72,7 @@ interface JarvisState {
   task: TaskPlan | null
   taskHistory: TaskPlan[]
   lastTurnMeta: TurnMeta | null
+  persona: Persona
   toasts: { id: string; message: string; kind: string }[]
 
   send: (obj: Record<string, unknown>) => void
@@ -77,6 +80,7 @@ interface JarvisState {
   sendAudioPcm: (b64: string) => void
   stop: () => void
   reset: () => void
+  setPersona: (p: Persona) => void
   pushToast: (message: string, kind?: string) => void
   dismissToast: (id: string) => void
 }
@@ -104,6 +108,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   task: null,
   taskHistory: [],
   lastTurnMeta: null,
+  persona: 'jarvis',
   toasts: [],
 
   send: (obj) => {
@@ -117,6 +122,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   },
   stop: () => get().send({ type: 'stop' }),
   reset: () => get().send({ type: 'reset' }),
+  setPersona: (p) => set({ persona: p }),
   pushToast: (message, kind = 'info') => {
     const id = genId()
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }))

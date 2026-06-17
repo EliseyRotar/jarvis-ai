@@ -4,8 +4,10 @@ import { HashRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import { initTheme } from './lib/theme'
+import { initPersonaEarly } from './lib/persona'
 
 initTheme()
+initPersonaEarly()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

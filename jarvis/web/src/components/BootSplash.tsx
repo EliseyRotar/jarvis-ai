@@ -9,9 +9,18 @@ const BOOT_LINES = [
   'ALL SYSTEMS NOMINAL',
 ]
 
+const ELI6_BOOT_LINES = [
+  'eli6 v0.1.0',
+  'loading personality... ok',
+  'linking audio........ ok',
+  'connecting model..... ok',
+  'ready.',
+]
+
 export function BootSplash({ onDone }: { onDone: () => void }) {
   const ready = useJarvisStore((s) => s.ready)
   const connected = useJarvisStore((s) => s.connected)
+  const persona = useJarvisStore((s) => s.persona)
   const [lineIdx, setLineIdx] = useState(0)
   const [minTimeElapsed, setMinTimeElapsed] = useState(false)
   const [fading, setFading] = useState(false)
@@ -22,11 +31,12 @@ export function BootSplash({ onDone }: { onDone: () => void }) {
   }, [])
 
   useEffect(() => {
+    const max = persona === 'eli6' ? ELI6_BOOT_LINES.length - 1 : BOOT_LINES.length - 1
     const i = setInterval(() => {
-      setLineIdx((n) => Math.min(n + 1, BOOT_LINES.length - 1))
+      setLineIdx((n) => Math.min(n + 1, max))
     }, 450)
     return () => clearInterval(i)
-  }, [])
+  }, [persona])
 
   useEffect(() => {
     if ((ready || connected) && minTimeElapsed) {
@@ -35,6 +45,24 @@ export function BootSplash({ onDone }: { onDone: () => void }) {
       return () => clearTimeout(t)
     }
   }, [ready, connected, minTimeElapsed, onDone])
+
+  if (persona === 'eli6') {
+    return (
+      <div
+        className={`fixed inset-0 z-50 flex flex-col items-start justify-center bg-black px-12 transition-opacity duration-500 ${
+          fading ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={{ fontFamily: 'var(--mono)' }}
+      >
+        <div className="space-y-1 text-[15px] text-[var(--text)]">
+          {ELI6_BOOT_LINES.slice(0, lineIdx + 1).map((ln, i) => (
+            <div key={i}>{ln}</div>
+          ))}
+          <div className="pt-1"><span className="crt-cursor">█</span></div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
