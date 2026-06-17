@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router'
-import { MessageSquare, LayoutDashboard, ListChecks, Database, Settings, ScrollText, Power } from 'lucide-react'
+import { MessageSquare, LayoutDashboard, ListChecks, Database, Settings, ScrollText, Power, Plug } from 'lucide-react'
 import { useJarvisStore } from '@/store/jarvisStore'
 import { cn } from '@/lib/utils'
 
@@ -9,6 +9,7 @@ const NAV = [
   { to: '/tasks', label: 'Tasks', icon: ListChecks },
   { to: '/memory', label: 'Memory', icon: Database },
   { to: '/logs', label: 'Logs', icon: ScrollText },
+  { to: '/connectors', label: 'Connectors', icon: Plug },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
