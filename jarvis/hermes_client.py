@@ -14,14 +14,15 @@ events the orb UI renders as a live progress tracker.
 Routing (with ``gateway.multiplex_profiles: true`` the gateway serves every
 profile under a ``/p/<profile>/`` prefix):
 
-    persona=jarvis + mode=default → default profile (JARVIS butler)
-    persona=jarvis + mode=wwf     → wwf profile (work mode)
-    persona=eli6                  → eli6 profile (co-founder voice)
+    mode="default" → default profile (Cosmo persona)
+    mode="wwf"     → wwf profile (work mode, Cosmo voice + WWF context)
+    mode="<name>"  → user-added profile from the project wizard
 
+Voice is unified: Cosmo. Project context comes from each profile's SOUL.md.
 Each profile has its own API key, memory, and session id.
 
-Public surface (mirrors the old llm.py contract so main.py barely changes):
-    - stream_chat(messages, on_event, *, mode="default", persona="jarvis")
+Public surface:
+    - stream_chat(messages, on_event, *, mode="default")
     - stop_run()
     - reset_session()
     - _pick_backend() / get_active_model() / get_models() / set_model()
@@ -167,15 +168,15 @@ _active_run_id: str | None = None
 _active_run_lock = asyncio.Lock()
 
 
-def _resolve_profile(mode: str, persona: str) -> str:
-    """Map (mode, persona) to a Hermes profile name.
+def _resolve_profile(mode: str) -> str:
+    """Map a mode name to a Hermes profile.
 
-    - persona=="eli6"          -> eli6 profile (voice override)
-    - mode matches a known profile name -> that profile (e.g. "wwf", "finance")
-    - otherwise                -> default profile
+    - mode matches a known profile name -> that profile (e.g. "default", "wwf", "finance")
+    - otherwise                          -> default profile
+
+    Voice is unified (Cosmo) across all profiles; persona overrides have
+    been removed. Project SOUL.md files provide per-project context.
     """
-    if persona == "eli6":
-        return "eli6"
     if mode and mode in _SESSION_IDS:
         return mode
     return "default"
@@ -378,7 +379,6 @@ async def stream_chat(
     on_event: EventHandler,
     *,
     mode: str = "default",
-    persona: str = "jarvis",
 ) -> dict[str, Any]:
     """Run one agent turn through Hermes, streaming events to ``on_event``.
 
@@ -391,7 +391,7 @@ async def stream_chat(
     """
     global _active_run_id
 
-    profile = _resolve_profile(mode, persona)
+    profile = _resolve_profile(mode)
     key = _profile_key(profile)
     if not key:
         await on_event({"type": "error", "message": f"Hermes API key missing for profile '{profile}'"})
