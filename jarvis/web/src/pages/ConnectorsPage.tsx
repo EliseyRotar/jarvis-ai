@@ -21,6 +21,8 @@ type Connector = {
   fields: ConnectorField[]
   enabled: boolean
   values: Record<string, string>
+  /** true = MCP healthy, false = MCP failed (needs credentials), null = native/unknown */
+  mcp_ok: boolean | null
 }
 
 type TelegramStatus = {
@@ -207,16 +209,27 @@ function ConnectedCard({
     }
   }
 
+  // mcp_ok: true=live, false=failed (needs credentials), null=native/no-mcp
+  const isLive = connector.mcp_ok === true || connector.mcp_ok === null
+  const dotColor = isLive ? 'bg-[var(--green,#00ff88)]' : 'bg-[var(--amber,#f59e0b)]'
+  const badgeColor = isLive
+    ? 'border-[var(--green,#00ff88)] text-[var(--green,#00ff88)]'
+    : 'border-[var(--amber,#f59e0b)] text-[var(--amber,#f59e0b)]'
+  const badgeLabel = isLive ? 'CONNECTED' : 'NOT CONNECTED'
+
   return (
-    <div className="flex items-start justify-between gap-3 rounded-sm border border-[var(--line-bright)] p-3">
+    <div className={cn(
+      'flex items-start justify-between gap-3 rounded-sm border p-3',
+      isLive ? 'border-[var(--line-bright)]' : 'border-[var(--amber,#f59e0b)] border-opacity-40',
+    )}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--green,#00ff88)]" />
+          <div className={cn('h-1.5 w-1.5 shrink-0 rounded-full', dotColor)} />
           <span className="font-display text-[12px] tracking-[0.12em] text-[var(--text)]">
             {connector.label}
           </span>
-          <span className="rounded-sm border border-[var(--green,#00ff88)] px-1.5 py-0.5 font-mono text-[9px] tracking-[0.1em] text-[var(--green,#00ff88)]">
-            CONNECTED
+          <span className={cn('rounded-sm border px-1.5 py-0.5 font-mono text-[9px] tracking-[0.1em]', badgeColor)}>
+            {badgeLabel}
           </span>
           {connector.category && (
             <span className="rounded-sm border border-[var(--line-bright)] px-1 py-0.5 font-mono text-[9px] text-[var(--text-faint)]">
@@ -224,7 +237,14 @@ function ConnectedCard({
             </span>
           )}
         </div>
-        <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">{connector.description}</div>
+        <div className="mt-0.5 text-[11px] text-[var(--text-dim)]">
+          {connector.description}
+          {!isLive && (
+            <span className="ml-1.5 text-[var(--amber,#f59e0b)] opacity-80">
+              — needs credentials/setup
+            </span>
+          )}
+        </div>
       </div>
       <button
         type="button"
