@@ -291,6 +291,39 @@ async def _ensure_session(session: aiohttp.ClientSession, base: str, key: str, s
         log.warning("session create failed (continuing anyway): %s", exc)
 
 
+async def warmup_model() -> None:
+    """Fire a tiny 1-token ping through Hermes on first session creation so
+    the cloud provider has the model warm before the user types anything.
+
+    Cloud LLMs (Ollama Cloud, OpenAI, etc.) spin up the model on first call
+    after a cold window — typically 2-4s. Doing a tiny 'ok' ping right after
+    session creation shaves most of that off the user's first real TTFT.
+
+    No-op if a turn was already run on this profile in this process lifetime.
+    """
+    global _warmed_profiles
+    for profile in _SESSION_IDS:
+        if profile in _warmed_profiles:
+            continue
+        try:
+            await stream_chat(
+                [{"role": "user", "content": "ok"}],
+                _noop_event,
+                mode=profile,
+            )
+            _warmed_profiles.add(profile)
+        except Exception as exc:
+            log.debug("warmup for %r skipped: %s", profile, exc)
+
+
+async def _noop_event(_event: dict[str, Any]) -> None:
+    """Sink for warmup events — discards everything."""
+    return
+
+
+_warmed_profiles: set[str] = set()
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Agentic Task Engine — translates Hermes `todo` tool calls into the
 # task_update events the orb UI renders as a live progress tracker.

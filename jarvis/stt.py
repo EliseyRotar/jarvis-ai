@@ -78,7 +78,7 @@ class STT:
                 language=language,
                 vad_filter=vad_filter,
                 vad_parameters={"threshold": 0.3, "min_silence_duration_ms": 300, "speech_pad_ms": 400},
-                beam_size=5,
+                beam_size=5,           # offline transcription — beam search for accuracy
             )
             text = "".join(seg.text for seg in segments).strip()
             return {
@@ -122,7 +122,10 @@ class STT:
                 language=language,
                 vad_filter=vad_filter,
                 vad_parameters={"threshold": 0.3, "min_silence_duration_ms": 300, "speech_pad_ms": 400},
-                beam_size=5,
+                beam_size=1,           # greedy for live STT — ~2x faster than beam=5,
+                                      # accuracy gap is small for clean mic input
+                best_of=1,
+                condition_on_previous_text=False,  # each utterance independent
             )
             text = "".join(seg.text for seg in segments).strip()
             return {
