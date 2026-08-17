@@ -1,18 +1,15 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter } from 'react-router'
 import './index.css'
 import App from './App.tsx'
 import { initTheme } from './lib/theme'
-import { initPersonaEarly } from './lib/persona'
+import { initPersonaEarly } from './lib/cosmo'
 
 initTheme()
 initPersonaEarly()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <HashRouter>
-      <App />
-    </HashRouter>
+    <App />
   </StrictMode>,
 )
