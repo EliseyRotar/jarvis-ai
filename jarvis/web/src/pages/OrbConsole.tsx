@@ -73,14 +73,17 @@ function SystemStatsWidget({ onClick }: { onClick?: () => void }) {
         const r = await fetch('/api/hardware')
         const data = await r.json()
         if (!alive) return
-        const cpu = data.cpu_usage ?? data.cpu ?? 0
-        const ram = data.ram
-        const gpu = data.gpu
+        // /api/hardware returns cpu_pct (number), ram (object with percent/used_gb/total_gb),
+        // gpu (object), cpu (string name only). Back-compat: also accept old shapes.
+        const cpuRaw = data.cpu_pct ?? data.cpu_usage ?? (typeof data.cpu === 'number' ? data.cpu : 0)
+        const cpuNum = Number(cpuRaw) || 0
+        const ram = data.ram ?? null
+        const gpu = data.gpu ?? null
         setStats({
-          cpu_pct: typeof cpu === 'object' ? (cpu.pct ?? 0) : cpu,
-          ram_pct: ram?.percent ?? 0,
-          ram_used_gb: ram?.used_gb ?? 0,
-          ram_total_gb: ram?.total_gb ?? 0,
+          cpu_pct: cpuNum,
+          ram_pct: Number(ram?.percent ?? data.ram_pct ?? 0) || 0,
+          ram_used_gb: Number(ram?.used_gb ?? 0) || 0,
+          ram_total_gb: Number(ram?.total_gb ?? data.ram_gb ?? 0) || 0,
           gpu_pct: gpu?.utilization_pct ?? null,
           gpu_name: gpu?.name ?? null,
         })
@@ -115,7 +118,7 @@ function SystemStatsWidget({ onClick }: { onClick?: () => void }) {
           <div className="flex items-center justify-between gap-2 text-[var(--text-dim)]">
             <span>cpu</span>
             <Bar pct={stats.cpu_pct} color="#00c8ff" />
-            <span className="tabular-nums text-[var(--text)]">{stats.cpu_pct.toFixed(0)}%</span>
+            <span className="tabular-nums text-[var(--text)]">{Number(stats.cpu_pct ?? 0).toFixed(0)}%</span>
           </div>
           <div className="flex items-center justify-between gap-2 text-[var(--text-dim)]">
             <span>ram</span>

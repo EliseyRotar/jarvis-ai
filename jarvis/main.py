@@ -1013,9 +1013,29 @@ async def api_hardware() -> dict[str, Any]:
     running = await om.ollama_running()
     installed = await om.list_installed_models() if running else []
     recs = om.get_recommendations(gpu["vram_gb"], ram)
+
+    # Sample CPU + RAM live (psutil). psutil.cpu_percent is blocking for
+    # `interval`, so run it in the default executor to keep the loop free.
+    def _sample() -> tuple[float, dict[str, float]]:
+        import psutil  # local import: optional dep at runtime
+        pct = psutil.cpu_percent(interval=None)  # non-blocking since first call
+        vm = psutil.virtual_memory()
+        return pct, {
+            "percent": float(vm.percent),
+            "used_gb": round(vm.used / (1024 ** 3), 1),
+            "total_gb": round(vm.total / (1024 ** 3), 1),
+        }
+
+    try:
+        cpu_pct, ram_stats = await loop.run_in_executor(None, _sample)
+    except Exception:
+        cpu_pct, ram_stats = 0.0, {"percent": 0.0, "used_gb": 0.0, "total_gb": round(ram, 1)}
+
     return {
         "ok": True,
         "cpu": cpu,
+        "cpu_pct": cpu_pct,
+        "ram": ram_stats,
         "ram_gb": round(ram, 1),
         "gpu": gpu,
         "ollama_running": running,
