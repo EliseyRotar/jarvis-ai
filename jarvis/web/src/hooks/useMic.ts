@@ -32,7 +32,62 @@ export function useMic() {
   const [recording, setRecording] = useState(false)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  // Live amplitude analysis (drives the orb while the operator speaks).
+  const analyserCtxRef = useRef<AudioContext | null>(null)
+  const rafRef = useRef<number | null>(null)
   const sendAudioPcm = useJarvisStore((s) => s.sendAudioPcm)
+  const setMicLevel = useJarvisStore((s) => s.setMicLevel)
+  const setListening = useJarvisStore((s) => s.setListening)
+
+  const teardownAnalyser = useCallback(() => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+    if (analyserCtxRef.current) {
+      try {
+        analyserCtxRef.current.close()
+      } catch {
+        /* noop */
+      }
+      analyserCtxRef.current = null
+    }
+    setListening(false)
+  }, [setListening])
+
+  const startAnalyser = useCallback(
+    (stream: MediaStream) => {
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
+        const ctx = new AudioCtx()
+        analyserCtxRef.current = ctx
+        const src = ctx.createMediaStreamSource(stream)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        analyser.smoothingTimeConstant = 0.75
+        src.connect(analyser)
+        const buf = new Uint8Array(analyser.fftSize)
+        const tick = () => {
+          analyser.getByteTimeDomainData(buf)
+          let sum = 0
+          for (let i = 0; i < buf.length; i++) {
+            const v = (buf[i] - 128) / 128
+            sum += v * v
+          }
+          const rms = Math.sqrt(sum / buf.length)
+          // Normalize: speech RMS sits ~0.02–0.25 → scale into a punchy 0..1.
+          const level = Math.min(1, rms * 4.5)
+          setMicLevel(level)
+          rafRef.current = requestAnimationFrame(tick)
+        }
+        setListening(true)
+        tick()
+      } catch (err) {
+        console.error('analyser failed', err)
+      }
+    },
+    [setMicLevel, setListening],
+  )
 
   const start = useCallback(async () => {
     if (recorderRef.current) return
@@ -47,6 +102,7 @@ export function useMic() {
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
         stream.getTracks().forEach((t) => t.stop())
         recorderRef.current = null
+        teardownAnalyser()
         try {
           const arrBuf = await blob.arrayBuffer()
           const AudioCtx = window.AudioContext || (window as any).webkitAudioContext
@@ -61,11 +117,12 @@ export function useMic() {
       }
       recorder.start()
       recorderRef.current = recorder
+      startAnalyser(stream)
       setRecording(true)
     } catch (err) {
       console.error('mic failed', err)
     }
-  }, [sendAudioPcm])
+  }, [sendAudioPcm, startAnalyser, teardownAnalyser])
 
   const stop = useCallback(() => {
     setRecording(false)
