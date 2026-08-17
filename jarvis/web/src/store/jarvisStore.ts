@@ -59,6 +59,7 @@ interface JarvisState {
   ready: boolean
   models: string[]
   activeModel: string
+  mode: 'default' | 'wwf'
   reactor: ReactorState
   speaking: boolean
   turnActive: boolean
@@ -73,6 +74,10 @@ interface JarvisState {
   taskHistory: TaskPlan[]
   lastTurnMeta: TurnMeta | null
   persona: Persona
+  uiMode: 'orb' | 'classic'
+  micLevel: number
+  listening: boolean
+  wakeFlash: number
   toasts: { id: string; message: string; kind: string }[]
 
   send: (obj: Record<string, unknown>) => void
@@ -81,6 +86,10 @@ interface JarvisState {
   stop: () => void
   reset: () => void
   setPersona: (p: Persona) => void
+  setUiMode: (m: 'orb' | 'classic') => void
+  setMode: (m: 'default' | 'wwf') => void
+  setMicLevel: (v: number) => void
+  setListening: (v: boolean) => void
   pushToast: (message: string, kind?: string) => void
   dismissToast: (id: string) => void
 }
@@ -95,6 +104,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   ready: false,
   models: [],
   activeModel: '',
+  mode: 'default',
   reactor: 'OFFLINE',
   speaking: false,
   turnActive: false,
@@ -109,6 +119,13 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   taskHistory: [],
   lastTurnMeta: null,
   persona: 'jarvis',
+  uiMode:
+    typeof localStorage !== 'undefined' && localStorage.getItem('jarvis-ui-mode') === 'classic'
+      ? 'classic'
+      : 'orb',
+  micLevel: 0,
+  listening: false,
+  wakeFlash: 0,
   toasts: [],
 
   send: (obj) => {
@@ -123,6 +140,19 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   stop: () => get().send({ type: 'stop' }),
   reset: () => get().send({ type: 'reset' }),
   setPersona: (p) => set({ persona: p }),
+  setUiMode: (m) => {
+    try {
+      localStorage.setItem('jarvis-ui-mode', m)
+    } catch {
+      /* noop */
+    }
+    set({ uiMode: m })
+  },
+  setMode: (m) => {
+    get().send({ type: 'set_mode', mode: m })
+  },
+  setMicLevel: (v) => set({ micLevel: v }),
+  setListening: (v) => set((s) => ({ listening: v, micLevel: v ? s.micLevel : 0 })),
   pushToast: (message, kind = 'info') => {
     const id = genId()
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }))
@@ -132,9 +162,24 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
 }))
 
 const MODEL_LABELS: Record<string, string> = {
-  'claude-haiku-4-5': 'HAIKU 4.5',
-  'claude-sonnet-4-6': 'SONNET 4.6',
-  'claude-opus-4-7': 'OPUS 4.7',
+  'gpt-oss:120b': 'GPT-OSS 120B',
+  'qwen3.5:397b': 'QWEN 3.5 397B',
+  'kimi-k3': 'KIMI K3',
+  'glm-5.2': 'GLM 5.2',
+  'glm-5.1': 'GLM 5.1',
+  'kimi-k2.7-code': 'KIMI K2.7 CODE',
+  'kimi-k2.6': 'KIMI K2.6',
+  'minimax-m3': 'MINIMAX M3',
+  'minimax-m2.7': 'MINIMAX M2.7',
+  'nemotron-3-ultra': 'NEMOTRON ULTRA',
+  'nemotron-3-super': 'NEMOTRON SUPER',
+  'nemotron-3-nano:30b': 'NEMOTRON NANO',
+  'mistral-large-3:675b': 'MISTRAL LARGE 3',
+  'gemma4:31b': 'GEMMA 4',
+  'deepseek-v4-pro:preview': 'DEEPSEEK V4 PRO',
+  'deepseek-v4-flash:preview': 'DEEPSEEK V4 FLASH',
+  'deepseek-v4-flash:0731': 'DEEPSEEK V4 FLASH 0731',
+  'gpt-oss:20b': 'GPT-OSS 20B',
 }
 export function modelLabel(m: string) {
   return MODEL_LABELS[m] || m.toUpperCase()
@@ -196,6 +241,11 @@ function handleMessage(msg: any) {
     case 'ready':
       set({ ready: true, reactor: 'ONLINE' })
       if (msg.model) set({ activeModel: msg.model })
+      if (msg.mode) set({ mode: msg.mode })
+      break
+    case 'mode_changed':
+      set({ mode: msg.mode })
+      get().pushToast(msg.mode === 'wwf' ? 'Work mode: WWF Crotone' : 'Normal mode', 'ok')
       break
     case 'history': {
       const messages = msg.messages || []
@@ -221,7 +271,7 @@ function handleMessage(msg: any) {
       get().pushToast(`Model → ${modelLabel(msg.model)}`, 'ok')
       break
     case 'wake':
-      set({ reactor: 'WAKE' })
+      set({ reactor: 'WAKE', wakeFlash: Date.now() })
       setTimeout(() => {
         if (!get().speaking) set({ reactor: 'ONLINE' })
       }, 1200)
@@ -307,6 +357,19 @@ function handleMessage(msg: any) {
     case 'shutdown':
       set({ reactor: 'OFFLINE', connected: false })
       get().pushToast('JARVIS is shutting down', 'err')
+      break
+    case 'persona_changed':
+      if (msg.persona === 'jarvis' || msg.persona === 'eli6') {
+        set({ persona: msg.persona })
+        get().pushToast(`Persona: ${msg.persona}`, 'ok')
+      }
+      break
+    case 'wizard_request':
+      if (msg.intent === 'create_project') {
+        window.dispatchEvent(new CustomEvent('jarvis-open-project-wizard', {
+          detail: { name: msg.name },
+        }))
+      }
       break
     case 'error':
       get().pushToast(msg.message || 'An error occurred', 'err')
