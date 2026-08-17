@@ -318,6 +318,10 @@ body {
 
 @keyframes blink { 50% { opacity: 0; } }
 @keyframes rotate { to { transform: rotate(360deg); } }
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
 
 /* — Orb console — */
 @keyframes orb-ping {
