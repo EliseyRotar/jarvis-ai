@@ -479,7 +479,7 @@ def add_project(spec: ProjectSpec, *, dry_run: bool = False, restart: bool = Tru
 
 def remove_project(name: str, *, confirm: bool = False, restart: bool = True) -> dict[str, Any]:
     """Undo a project: delete the Hermes profile dir + unregister from JARVIS."""
-    if name in {"default", "wwf", "eli6"}:
+    if name in {"default", "wwf"}:
         return {"ok": False, "error": f"{name!r} is a built-in profile — cannot remove"}
     profile_dir = HERMES_HOME / "profiles" / name
     if not profile_dir.exists():
@@ -524,7 +524,7 @@ def list_projects() -> list[dict[str, Any]]:
     """All project profiles known to JARVIS (built-ins + user-added)."""
     projects = _load_projects()
     out: list[dict[str, Any]] = []
-    for name in ("default", "wwf", "eli6"):
+    for name in ("default", "wwf"):
         out.append({"name": name, "built_in": True})
     for name, meta in sorted(projects.items()):
         out.append({"name": name, "built_in": False, **meta})
