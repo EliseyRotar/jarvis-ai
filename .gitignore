@@ -79,3 +79,7 @@ whatsapp-mcp/whatsapp-bridge/whatsapp-bridge
 whatsapp-mcp/whatsapp-bridge/whatsapp-bridge.exe
 whatsapp-mcp/whatsapp-bridge/qr.png
 whatsapp-mcp/whatsapp-bridge/store/
+
+# ── Runtime state files (created by start.ps1 / stop.ps1) ──────────────────
+.jarvis.pids
+.jarvis.configured
