@@ -1,4 +1,4 @@
-# JARVIS — single entry point.
+﻿# JARVIS — single entry point.
 #
 # First run:  installs Hermes Agent + JARVIS deps via the bootstrap wizard.
 # Later runs: starts Hermes gateway, then JARVIS voice server.
