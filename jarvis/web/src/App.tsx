@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { connectWebSocket, useJarvisStore } from '@/store/jarvisStore'
 import { BootSplash } from '@/components/BootSplash'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { OrbConsole } from '@/pages/OrbConsole'
 import { initPersonaEarly } from '@/lib/cosmo'
 import '@/components/ProjectsPanel'
@@ -20,10 +21,10 @@ function App() {
   }, [setPersona])
 
   return (
-    <>
+    <ErrorBoundary>
       {!booted && <BootSplash onDone={() => setBooted(true)} />}
       <OrbConsole />
-    </>
+    </ErrorBoundary>
   )
 }
 
