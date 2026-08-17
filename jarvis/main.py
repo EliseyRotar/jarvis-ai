@@ -723,6 +723,87 @@ async def api_memory_delete(key: str) -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Admin — privilege introspection
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/admin/status")
+async def api_admin_status() -> dict[str, Any]:
+    """Report the current process's effective Windows privileges.
+
+    Cosmo announces this on first boot so the operator knows what he's
+    actually allowed to do — install services, kill processes, edit
+    system files, etc. — without having to check manually.
+
+    Useful when the user wonders whether they need to run the installer
+    script (which elevates the service to LOCAL SYSTEM) to unlock
+    system-wide actions.
+    """
+    import ctypes
+
+    # Open SC manager with CREATE_SERVICE (0x0002) — that's the access
+    # mask that actually requires admin. Connecting (0x0001) is granted
+    # to non-admin users and would give a false positive.
+    try:
+        advapi = ctypes.windll.advapi32
+        # Default restype for OpenSCManagerW is c_int — make it pointer-sized.
+        advapi.OpenSCManagerW.restype = ctypes.c_void_p
+        advapi.CloseServiceHandle.argtypes = [ctypes.c_void_p]
+        advapi.CloseServiceHandle.restype = ctypes.c_int
+        scm = advapi.OpenSCManagerW(None, None, 0x0002)  # CREATE_SERVICE
+        can_manage_services = bool(scm)
+        if scm:
+            advapi.CloseServiceHandle(scm)
+    except Exception:
+        can_manage_services = False
+
+    # SeShutdownPrivilege / SeDebugPrivilege probe via GetTokenInformation
+    # is the canonical check but heavy. The SC manager check is good
+    # enough for the operator's "am I admin?" question.
+    is_local_system = False
+    try:
+        import os
+        # LOCAL SYSTEM runs as NT AUTHORITY\SYSTEM. Detect via env var.
+        is_local_system = os.environ.get("USERNAME", "").upper() == "SYSTEM"
+    except Exception:
+        pass
+
+    # Process identity + elevation level (TokenElevation)
+    identity = {
+        "username": "",
+        "is_admin": False,
+        "is_local_system": is_local_system,
+        "can_manage_services": can_manage_services,
+    }
+    try:
+        import os
+        identity["username"] = os.environ.get("USERNAME", "") or os.environ.get("USER", "")
+    except Exception:
+        pass
+
+    # Try the standard "is this process elevated?" check.
+    try:
+        import ctypes
+        token = ctypes.c_void_p()
+        token_elevation = ctypes.c_int(0)
+        length = ctypes.c_ulong()
+        advapi = ctypes.windll.advapi32
+        if advapi.OpenProcessToken(ctypes.windll.kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+            try:
+                ctypes.windll.advapi32.GetTokenInformation(
+                    token, 20,  # TokenElevation
+                    ctypes.byref(token_elevation), ctypes.sizeof(token_elevation), ctypes.byref(length),
+                )
+                identity["is_admin"] = bool(token_elevation.value)
+            finally:
+                ctypes.windll.kernel32.CloseHandle(token)
+    except Exception:
+        pass
+
+    return {"ok": True, **identity}
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Admin — project onboarding wizard
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -1191,11 +1272,22 @@ async def ws_endpoint(ws: WebSocket) -> None:
     global _current_mode, _current_turn_task
     await ws.accept()
     hub.add(ws)
+
+    # Probe admin status once per connection — cheap (~1ms), lets the UI
+    # announce Cosmo's privilege level on connect.
+    admin_status: dict[str, Any] = {}
+    try:
+        admin_status = await api_admin_status()
+    except Exception:
+        pass
+    admin_status = {k: v for k, v in admin_status.items() if k != "ok"}
+
     await ws.send_text(json.dumps({
         "type": "ready",
         "model": llm.get_active_model(),
         "backend": llm._pick_backend(),
         "mode": _current_mode,
+        "admin": admin_status,
     }))
 
     # Replay any restored/prior conversation so the UI visually resumes

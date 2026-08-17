@@ -1,6 +1,90 @@
 import { useEffect, useState } from 'react'
+import { ShieldCheck, ShieldAlert, Shield } from 'lucide-react'
 import { registerPanelContent } from './RadialMenu'
 import { useJarvisStore, modelLabel } from '@/store/jarvisStore'
+
+interface AdminStatus {
+  ok: boolean
+  username: string
+  is_admin: boolean
+  is_local_system: boolean
+  can_manage_services: boolean
+}
+
+function AdminStatusCard() {
+  const [status, setStatus] = useState<AdminStatus | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    const fetchStatus = async () => {
+      try {
+        const r = await fetch('/api/admin/status')
+        const data = await r.json()
+        if (alive) {
+          setStatus(data)
+          setErr(null)
+        }
+      } catch (e) {
+        if (alive) setErr((e as Error).message)
+      }
+    }
+    fetchStatus()
+    const i = setInterval(fetchStatus, 15000)
+    return () => { alive = false; clearInterval(i) }
+  }, [])
+
+  if (err) {
+    return (
+      <div className="rounded-sm border border-[var(--red)] bg-[rgba(255,71,111,0.05)] px-3 py-2 font-mono text-[10.5px] text-[var(--red)]">
+        <ShieldAlert size={11} className="mr-1.5 inline align-[-1px]" />
+        status probe failed: {err}
+      </div>
+    )
+  }
+  if (!status) {
+    return (
+      <div className="rounded-sm border border-[var(--line-bright)] bg-black/30 px-3 py-2 font-mono text-[10.5px] text-[var(--text-dim)]">
+        probing…
+      </div>
+    )
+  }
+
+  const Icon = status.is_local_system ? ShieldCheck : status.is_admin ? ShieldCheck : Shield
+  const colorClass = status.is_local_system
+    ? 'border-[var(--green)] text-[var(--green)]'
+    : status.is_admin
+      ? 'border-[var(--amber)] text-[var(--amber)]'
+      : 'border-[var(--line-bright)] text-[var(--text-dim)]'
+  const label = status.is_local_system
+    ? 'LOCAL SYSTEM'
+    : status.is_admin
+      ? 'elevated'
+      : 'unprivileged'
+
+  return (
+    <div className={`rounded-sm border ${colorClass} bg-black/30 px-3 py-2 font-mono text-[10.5px] leading-relaxed`}>
+      <div className="flex items-center gap-1.5">
+        <Icon size={11} />
+        <span className="uppercase tracking-[0.18em]">{label}</span>
+      </div>
+      <div className="mt-1 text-[var(--text-dim)]">
+        user: <span className="text-[var(--text)]">{status.username || '—'}</span>
+      </div>
+      <div className="text-[var(--text-dim)]">
+        can manage services:{' '}
+        <span className={status.can_manage_services ? 'text-[var(--green)]' : 'text-[var(--red)]'}>
+          {status.can_manage_services ? 'yes' : 'no'}
+        </span>
+      </div>
+      {!status.is_local_system && (
+        <div className="mt-2 text-[9.5px] text-[var(--text-faint)]">
+          Run <code className="rounded bg-black/50 px-1 py-0.5">.\install_service.ps1</code> to elevate.
+        </div>
+      )}
+    </div>
+  )
+}
 
 function SettingsPanel() {
   const models = useJarvisStore((s) => s.models)
@@ -82,6 +166,11 @@ function SettingsPanel() {
           <div>Honest, direct, slightly profane. Your partner on the wire.</div>
           <div className="mt-2 text-[var(--text-faint)]">Brain: Hermes Agent · Voice: Piper TTS</div>
         </div>
+      </section>
+
+      <section>
+        <h4 className="mb-2 font-display text-[11px] uppercase tracking-[0.2em] text-[var(--blue)]">Admin</h4>
+        <AdminStatusCard />
       </section>
     </div>
   )

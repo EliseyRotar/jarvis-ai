@@ -16,6 +16,16 @@ function Write-Status($msg) { Write-Host "[jarvis] $msg" -ForegroundColor Cyan }
 if ($Force) { Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Out-Null }
 
 Write-Status "Stopping JARVIS voice server ..."
+$Svc = Get-Service 'JarvisVoiceServer' -ErrorAction SilentlyContinue
+if ($Svc) {
+    if ($Svc.Status -eq 'Running') {
+        Write-Status "  stopping Windows Service 'JarvisVoiceServer'"
+        Stop-Service 'JarvisVoiceServer' -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+}
+# Also kill any foreground uvicorn (in case the service isn't installed
+# or someone started it manually).
 Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -like '*uvicorn*' -or $_.CommandLine -like '*jarvis.main*' } |
     ForEach-Object {

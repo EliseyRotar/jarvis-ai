@@ -102,18 +102,32 @@ if (-not $SkipGateway) {
 if ($OnlyGateway) { exit 0 }
 
 # ── 6. Start JARVIS voice server ──────────────────────────────────────────
-Write-Status "Starting JARVIS voice server on :8765 ..."
-# Kill any pre-existing uvicorn bound to 8765
-Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-    Where-Object { $_.CommandLine -like '*uvicorn*' -or $_.CommandLine -like '*jarvis.main*' } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Seconds 2
+$Svc = Get-Service 'JarvisVoiceServer' -ErrorAction SilentlyContinue
+if ($Svc) {
+    Write-Status "JARVIS voice server is registered as a Windows Service (LOCAL SYSTEM)."
+    if ($Svc.Status -ne 'Running') {
+        Write-Status "Starting service..."
+        Start-Service 'JarvisVoiceServer'
+        Start-Sleep -Seconds 3
+    }
+    $Svc.Refresh()
+    Write-Status "Service status: $($Svc.Status)"
+    $Proc = $null
+} else {
+    Write-Status "Starting JARVIS voice server on :8765 (foreground process) ..."
+    Write-Warn_ "Tip: run .\install_service.ps1 once to register as a Windows Service (LOCAL SYSTEM, no UAC)."
+    # Kill any pre-existing uvicorn bound to 8765
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+        Where-Object { $_.CommandLine -like '*uvicorn*' -or $_.CommandLine -like '*jarvis.main*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 2
 
-$Uvicorn = Join-Path $VenvDir 'Scripts\uvicorn.exe'
-$Proc = Start-Process -FilePath $Uvicorn `
-    -ArgumentList @('jarvis.main:app', '--host', '127.0.0.1', '--port', '8765', '--workers', '1', '--timeout-keep-alive', '75') `
-    -WindowStyle Hidden -PassThru
-Write-Status "JARVIS PID = $($Proc.Id)"
+    $Uvicorn = Join-Path $VenvDir 'Scripts\uvicorn.exe'
+    $Proc = Start-Process -FilePath $Uvicorn `
+        -ArgumentList @('jarvis.main:app', '--host', '127.0.0.1', '--port', '8765', '--workers', '1', '--timeout-keep-alive', '75') `
+        -WindowStyle Hidden -PassThru
+    Write-Status "JARVIS PID = $($Proc.Id)"
+}
 
 # ── 7. Wait for voice server /health ──────────────────────────────────────
 $VoiceReady = $false
@@ -134,7 +148,8 @@ if (-not $VoiceReady) {
 $GatewayPids = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
     Where-Object { $_.CommandLine -like '*gateway*' } |
     ForEach-Object { $_.ProcessId })
-"PidFile v1`nGatewayPids: $($GatewayPids -join ',')`nVoiceServerPid: $($Proc.Id)" |
+$VoicePid = if ($Proc) { $Proc.Id } else { '' }
+"PidFile v1`nGatewayPids: $($GatewayPids -join ',')`nVoiceServerPid: $VoicePid`nServiceManaged: $($Svc -ne $null)" |
     Set-Content -Path $PidFile -Encoding UTF8
 
 Write-Status "All up. Use .\stop.ps1 to shut down."
