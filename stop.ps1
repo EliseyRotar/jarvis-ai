@@ -1,4 +1,4 @@
-# JARVIS — graceful shutdown. Stops the JARVIS voice server, the Hermes
+﻿# JARVIS — graceful shutdown. Stops the JARVIS voice server, the Hermes
 # gateway, and any background MCP servers they spawned. Reads PIDs from
 # .\.jarvis.pids if present, otherwise kills anything python that matches.
 
