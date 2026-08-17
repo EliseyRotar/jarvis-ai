@@ -18,7 +18,7 @@ export interface OrbState {
   listening: boolean;
   thinking: boolean;
   micLevel: number; // 0..1
-  mode: "default" | "wwf";
+  mode: string;
   wakeFlash: number; // timestamp of last wake event (0 = none)
 }
 
