@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { OrbCanvas } from '@/components/OrbCanvas'
 import { TaskOrb } from '@/components/TaskOrb'
 import { RadialMenu, type RadialPanel } from '@/components/RadialMenu'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -368,23 +369,23 @@ export function OrbConsole() {
 
       {/* Top-right: clock */}
       <div className="absolute right-5 top-4 z-10">
-        <ClockWidget />
+        <ErrorBoundary compact label="clock"><ClockWidget /></ErrorBoundary>
       </div>
 
       {/* Upper-left rail: project + system stats */}
       <div className="absolute left-5 top-20 z-10 flex flex-col gap-2.5">
-        <ProjectContextWidget />
-        <SystemStatsWidget />
+        <ErrorBoundary compact label="project"><ProjectContextWidget /></ErrorBoundary>
+        <ErrorBoundary compact label="system"><SystemStatsWidget /></ErrorBoundary>
       </div>
 
       {/* Upper-right rail: weather */}
       <div className="absolute right-5 top-20 z-10 flex flex-col gap-2.5">
-        <WeatherWidget />
+        <ErrorBoundary compact label="weather"><WeatherWidget /></ErrorBoundary>
       </div>
 
       {/* Lower-left: activity feed */}
       <div className="absolute left-5 top-[60%] z-10 w-[220px] -translate-y-1/2">
-        <ActivityWidget />
+        <ErrorBoundary compact label="activity"><ActivityWidget /></ErrorBoundary>
       </div>
 
       {/* Radial menu (right-center) — opens panels */}
@@ -395,7 +396,7 @@ export function OrbConsole() {
       {/* Task panel (left-center, mid-low) */}
       {task && (
         <div className="pointer-events-none absolute left-5 bottom-32 z-10">
-          <TaskOrb plan={task} />
+          <ErrorBoundary compact label="task"><TaskOrb plan={task} /></ErrorBoundary>
         </div>
       )}
 

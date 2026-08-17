@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover
     WhisperModel = None  # type: ignore
 
 
-DEFAULT_MODEL = os.environ.get("JARVIS_WHISPER_MODEL", "base.en")
+DEFAULT_MODEL = os.environ.get("JARVIS_WHISPER_MODEL", "medium.en")
 
 # Auto-detect CUDA if available, fallback to CPU
 _DETECTED_DEVICE = None

@@ -3,6 +3,7 @@ import {
   FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ErrorBoundary } from './ErrorBoundary'
 
 export interface RadialPanel {
   id: string
@@ -22,6 +23,16 @@ const PANEL_CONTENT: Record<string, () => React.ReactNode> = {}
 
 export function registerPanelContent(id: string, render: () => React.ReactNode) {
   PANEL_CONTENT[id] = render
+}
+
+/** Wrap a registered panel in its own ErrorBoundary so a single panel crash
+ *  doesn't tear down the whole orb UI. */
+function PanelErrorBoundary(props: { id: string; children: React.ReactNode }) {
+  return (
+    <ErrorBoundary compact label={`panel · ${props.id}`}>
+      {props.children}
+    </ErrorBoundary>
+  )
 }
 
 export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
@@ -102,7 +113,11 @@ export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
-              {openId === '__hub__' ? <HubPanel onPick={(id) => setOpen(id)} panels={panels} /> : (PANEL_CONTENT[openId]?.() ?? <UnknownPanel id={openId} />)}
+              {openId === '__hub__' ? <HubPanel onPick={(id) => setOpen(id)} panels={panels} /> : (
+                <PanelErrorBoundary id={openId}>
+                  {PANEL_CONTENT[openId]?.() ?? <UnknownPanel id={openId} />}
+                </PanelErrorBoundary>
+              )}
             </div>
           </div>
         </div>

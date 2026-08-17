@@ -1418,7 +1418,7 @@ async def wake_word_loop() -> None:
         return
 
     silence_threshold = int(os.environ.get("JARVIS_WAKE_THRESHOLD", "500"))  # /1000 * model score
-    capture_seconds = float(os.environ.get("JARVIS_CAPTURE_SECONDS", "8"))
+    capture_seconds = float(os.environ.get("JARVIS_CAPTURE_SECONDS", "5"))
 
     with stream:
         while True:
