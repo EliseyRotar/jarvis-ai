@@ -238,6 +238,18 @@ function handleMessage(msg: any) {
       set({ ready: true, reactor: 'ONLINE' })
       if (msg.model) set({ activeModel: msg.model })
       if (msg.mode) set({ mode: msg.mode })
+      // Surface admin status as a toast so the operator can see
+      // at a glance whether Cosmo is running elevated or not.
+      if (msg.admin) {
+        const a = msg.admin
+        if (a.is_local_system) {
+          get().pushToast('cosmo: LOCAL SYSTEM — full admin on this box', 'ok')
+        } else if (a.is_admin || a.can_manage_services) {
+          get().pushToast(`cosmo: elevated (${a.username || 'admin'})`, 'ok')
+        } else {
+          get().pushToast('cosmo: unprivileged session', 'warn')
+        }
+      }
       break
     case 'mode_changed':
       set({ mode: msg.mode })
