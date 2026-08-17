@@ -52,14 +52,12 @@ export type TurnMeta = {
   num_turns?: number
 }
 
-import type { Persona } from '@/lib/persona'
-
 interface JarvisState {
   connected: boolean
   ready: boolean
   models: string[]
   activeModel: string
-  mode: 'default' | 'wwf'
+  mode: string  // dynamic: 'default', 'wwf', or any user-added project profile
   reactor: ReactorState
   speaking: boolean
   turnActive: boolean
@@ -73,7 +71,6 @@ interface JarvisState {
   task: TaskPlan | null
   taskHistory: TaskPlan[]
   lastTurnMeta: TurnMeta | null
-  persona: Persona
   uiMode: 'orb' | 'classic'
   micLevel: number
   listening: boolean
@@ -85,9 +82,9 @@ interface JarvisState {
   sendAudioPcm: (b64: string) => void
   stop: () => void
   reset: () => void
-  setPersona: (p: Persona) => void
   setUiMode: (m: 'orb' | 'classic') => void
-  setMode: (m: 'default' | 'wwf') => void
+  setMode: (m: string) => void
+  setPersona: (p: 'cosmo') => void
   setMicLevel: (v: number) => void
   setListening: (v: boolean) => void
   pushToast: (message: string, kind?: string) => void
@@ -118,7 +115,6 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   task: null,
   taskHistory: [],
   lastTurnMeta: null,
-  persona: 'jarvis',
   uiMode:
     typeof localStorage !== 'undefined' && localStorage.getItem('jarvis-ui-mode') === 'classic'
       ? 'classic'
@@ -139,7 +135,6 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   },
   stop: () => get().send({ type: 'stop' }),
   reset: () => get().send({ type: 'reset' }),
-  setPersona: (p) => set({ persona: p }),
   setUiMode: (m) => {
     try {
       localStorage.setItem('jarvis-ui-mode', m)
@@ -148,6 +143,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
     }
     set({ uiMode: m })
   },
+  setPersona: () => { /* unified voice — no-op */ },
   setMode: (m) => {
     get().send({ type: 'set_mode', mode: m })
   },
@@ -357,12 +353,6 @@ function handleMessage(msg: any) {
     case 'shutdown':
       set({ reactor: 'OFFLINE', connected: false })
       get().pushToast('JARVIS is shutting down', 'err')
-      break
-    case 'persona_changed':
-      if (msg.persona === 'jarvis' || msg.persona === 'eli6') {
-        set({ persona: msg.persona })
-        get().pushToast(`Persona: ${msg.persona}`, 'ok')
-      }
       break
     case 'wizard_request':
       if (msg.intent === 'create_project') {
