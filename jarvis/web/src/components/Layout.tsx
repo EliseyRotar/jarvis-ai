@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router'
+import { Orbit } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { CommandPalette } from './CommandPalette'
 import { Toasts } from './Toasts'
 import { SystemPulse } from './SystemPulse'
 import { TerminalLayout } from './TerminalLayout'
+import { OrbConsole } from '@/pages/OrbConsole'
 import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvisStore'
 
 function Clock() {
@@ -25,6 +27,7 @@ function TopBar() {
   const connected = useJarvisStore((s) => s.connected)
   const models = useJarvisStore((s) => s.models)
   const activeModel = useJarvisStore((s) => s.activeModel)
+  const setUiMode = useJarvisStore((s) => s.setUiMode)
 
   useEffect(() => {
     loadModels()
@@ -59,6 +62,15 @@ function TopBar() {
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => setUiMode('orb')}
+          title="Switch to the Orb console"
+          className="flex items-center gap-1.5 rounded-sm border border-[var(--line-bright)] px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-[var(--text-dim)] transition hover:border-[var(--blue)] hover:text-[var(--blue)]"
+        >
+          <Orbit size={12} />
+          ORB
+        </button>
         <Clock />
         <kbd className="rounded-sm border border-[var(--line-bright)] px-1.5 py-0.5 text-[10px] text-[var(--text-dim)]">
           {navigator.platform.includes('Mac') ? '⌘/' : 'Ctrl+/'}
@@ -71,6 +83,7 @@ function TopBar() {
 export function Layout() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const persona = useJarvisStore((s) => s.persona)
+  const uiMode = useJarvisStore((s) => s.uiMode)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -82,6 +95,10 @@ export function Layout() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // The Orb console is the default immersive view; the classic HUD / terminal
+  // is one button away.
+  if (uiMode === 'orb') return <OrbConsole />
 
   if (persona === 'eli6') return <TerminalLayout />
 
