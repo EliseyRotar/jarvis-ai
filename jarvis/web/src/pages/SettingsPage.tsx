@@ -4,6 +4,7 @@ import { useJarvisStore, loadModels, setModel, modelLabel } from '@/store/jarvis
 import { cn } from '@/lib/utils'
 import { getTheme, setTheme, type Theme } from '@/lib/theme'
 import { savePersona, type Persona } from '@/lib/persona'
+import { ProjectsSection } from '@/components/ProjectsSection'
 
 const THEME_OPTIONS: { value: Theme; label: string }[] = [
   { value: 'light', label: 'LIGHT' },
@@ -584,6 +585,8 @@ export function SettingsPage() {
       </section>
 
       <OllamaSection />
+
+      <ProjectsSection />
 
       <section className="hud-panel shrink-0">
         <div className="hud-panel-head">
