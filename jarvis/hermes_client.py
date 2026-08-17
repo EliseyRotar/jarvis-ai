@@ -64,7 +64,7 @@ AVAILABLE_MODELS = [
     "deepseek-v4-flash:0731",
     "gpt-oss:20b",
 ]
-DEFAULT_MODEL = "gpt-oss:120b"
+DEFAULT_MODEL = os.environ.get("JARVIS_MODEL", "gpt-oss:20b")
 
 # Back-compat aliases for main.py's old llm.py references.
 DEFAULT_OR_MODEL = DEFAULT_MODEL
