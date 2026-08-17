@@ -62,7 +62,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import llm, tts
+from . import hermes_client as llm
+from . import tts
+from . import context_manager as ctx_mgr
 from .stt import get_stt
 from .task_manager import TaskManager
 from .tools import hypr as hypr_tool
@@ -93,12 +95,6 @@ async def lifespan(app: "FastAPI"):
         # (Ctrl+C, systemd/service stop, reboot signal) — not just the
         # explicit /api/shutdown endpoint — so the next launch resumes here.
         _save_history()
-        # Cleanly disconnect all MCP servers
-        try:
-            from . import mcp_manager
-            await mcp_manager.stop()
-        except Exception as _mcp_exc:
-            log.warning("MCP shutdown error: %s", _mcp_exc)
 
 
 app = FastAPI(title="JARVIS", version="1.0", lifespan=lifespan)
@@ -152,6 +148,13 @@ conversation: list[dict[str, Any]] = []
 _lock = asyncio.Lock()
 _tasks: set[asyncio.Task] = set()
 
+# ── Mode state ──────────────────────────────────────────────────────────────
+# "default" = general JARVIS (Hermes default profile)
+# "wwf"     = work mode (Hermes wwf profile, WWF Crotone project)
+# Each mode has its own Hermes session + memory. Switching modes resets the
+# local conversation so the two contexts never bleed into each other.
+_current_mode: str = "default"
+
 # ── Language tracking ──────────────────────────────────────────────────────
 # Updated by STT on each voice input; used for TTS language selection.
 _current_lang: str = "en"
@@ -198,6 +201,54 @@ def _create_task(coro) -> asyncio.Task:
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
     return task
+
+
+# ── Spoken acknowledgements ────────────────────────────────────────────────
+# JARVIS speaks a short ack the instant a turn starts (masking first-token
+# latency) and again after each action that changes state, so the operator
+# always hears progress.
+_START_ACKS = {
+    "jarvis": ["Right away, sir.", "On it, sir.", "At once.", "Working on it, sir."],
+    "eli6": ["on it.", "got it.", "one sec.", "yep, on it."],
+}
+# Exact tool names that mutate state → a fitting confirmation phrase.
+_ACTION_PHRASES = {
+    "whatsapp_send": "Message sent.",
+    "file_write": "File saved.",
+    "file_delete": "Deleted.",
+    "schedule_add": "Scheduled.",
+    "schedule_cancel": "Schedule cancelled.",
+    "memory_save": "Noted.",
+}
+# Substrings that indicate a state-changing action (covers MCP/Home-Assistant
+# tools whose exact names vary, e.g. light.turn_on, switch.toggle).
+_ACTION_SUBSTR = ("turn_on", "turn_off", "toggle", "set_state", "send_message",
+                  "press", "open_cover", "close_cover", "set_temperature")
+
+
+def _persona_now() -> str:
+    try:
+        from . import persona
+        return persona.get_persona()
+    except Exception:
+        return "jarvis"
+
+
+def _start_ack_phrase() -> str:
+    import random
+    return random.choice(_START_ACKS.get(_persona_now(), _START_ACKS["jarvis"]))
+
+
+def _action_ack_phrase(name: str) -> str | None:
+    """Short confirmation for a state-changing tool, or None to stay silent."""
+    name = name or ""
+    if name in _ACTION_PHRASES:
+        phrase = _ACTION_PHRASES[name]
+    elif any(s in name for s in _ACTION_SUBSTR):
+        phrase = "Done."
+    else:
+        return None
+    return phrase.lower() if _persona_now() == "eli6" else phrase
 
 
 def _memory_context_block(limit: int = 8) -> str:
@@ -297,6 +348,12 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     """Run a full LLM + tool turn, streaming events to `send` (a callable
     awaiting a dict) and broadcasting to all other clients."""
     global _current_lang, _current_turn_task
+    # Barge-in: a new request supersedes any still-running turn. Cancel the old
+    # one so we don't get two overlapping responses/voices (also fixes the
+    # concurrent-turn race where _current_turn_task was silently overwritten).
+    _prev_turn = _current_turn_task
+    if _prev_turn is not None and not _prev_turn.done() and _prev_turn is not asyncio.current_task():
+        _prev_turn.cancel()
     _current_turn_task = asyncio.current_task()
 
     if not text.strip():
@@ -324,11 +381,36 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
             await hypr_tool.dispatch("exec", f"firefox {WEBUI_URL}")
         return
 
+    # Fast-path: voice intents ("create a new project called X",
+    # "switch to project finance", "list projects"). Deterministic, no LLM.
+    from .voice_intents import classify, handle_voice_intent
+    intent = classify(text)
+    if intent is not None:
+        intent_name, groups = intent
+        handled = await handle_voice_intent(intent_name, groups, send=send, broadcast=hub.broadcast)
+        if handled:
+            await _emit({"type": "transcript", "text": text, "voice": voice}, send)
+            await _emit({"type": "turn_start", "voice": voice}, send)
+            await _emit({"type": "turn_end", "final_text": "(voice command handled)", "elapsed": 0.0}, send)
+            return
+
+    # Fast-path: typed slash commands ("/research foo", "/review bar").
+    # The subagent prefix gets prepended to the prompt before going to Hermes.
+    from .subagents import slash_to_subagent
+    subagent, stripped = slash_to_subagent(text)
+    if subagent is not None and stripped:
+        text = f"{subagent.system_prefix}\n\n---\n\n{stripped}"
+        # fall through to the normal LLM turn with the rewritten text
+
     user_message = f"[VOICE] {text}" if voice else text
     await _emit({"type": "transcript", "text": text, "voice": voice}, send)
 
     async with _lock:
         conversation.append({"role": "user", "content": user_message})
+        # Trim in-memory conversation if it's grown too large
+        removed = ctx_mgr.trim_conversation_in_place(conversation, max_messages=100)
+        if removed:
+            log.info("trimmed %d old messages from conversation before LLM call", removed)
         msgs_snapshot = list(conversation)
 
     task_mgr = TaskManager()
@@ -342,8 +424,28 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
     async def on_event(event: dict[str, Any]) -> None:
         nonlocal _tts_buf, _speaking_started
+        # task_update events (from the Hermes todo tracker) pass through
+        # directly — the frontend renders them as the live task tracker.
+        if event.get("type") == "task_update":
+            await _emit(event, send)
+            return
         # Forward raw event to UI
         await _emit({"type": "llm_event", "event": event}, send)
+
+        # Per-action voice confirmation for state-changing tools (sent, saved,
+        # deleted, toggled, …). Reads are not announced.
+        if event.get("type") == "tool_result":
+            res = event.get("result")
+            ok = True
+            if isinstance(res, dict):
+                ok = res.get("ok") is not False and not res.get("error")
+            phrase = _action_ack_phrase(event.get("name") or "")
+            if phrase and ok:
+                if not _speaking_started:
+                    _speaking_started = True
+                    await _emit({"type": "speaking", "state": "start"}, send)
+                _create_task(tts.speak(phrase, lang=detected_lang))
+
         # Let task manager react
         snap = task_mgr.handle_event(event)
         if snap is not None:
@@ -393,8 +495,15 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
     started = time.time()
     await _emit({"type": "turn_start", "voice": voice}, send)
+
+    # Brief spoken acknowledgement up front so the operator immediately hears
+    # JARVIS engage while the model produces its first tokens.
+    _speaking_started = True
+    await _emit({"type": "speaking", "state": "start"}, send)
+    _sentence_tasks.append(_create_task(tts.speak(_start_ack_phrase(), lang=detected_lang)))
+
     try:
-        result = await llm.stream_chat(msgs_snapshot, on_event)
+        result = await llm.stream_chat(msgs_snapshot, on_event, mode=_current_mode, persona=_persona_now())
     except Exception as exc:
         log.exception("LLM stream failed")
         await _emit({"type": "error", "message": f"LLM stream failed: {exc}"}, send)
@@ -470,20 +579,11 @@ async def icons() -> FileResponse:
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    has_claude = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
-    has_or = bool(os.environ.get("OPENROUTER_API_KEY"))
-    has_anth = bool(os.environ.get("ANTHROPIC_API_KEY"))
     return {
         "ok": True,
         "backend": llm._pick_backend(),
-        "claude_model": llm.get_active_model(),
-        "openrouter_model": llm.DEFAULT_OR_MODEL,
-        "ollama_model": llm.DEFAULT_OLLAMA_MODEL,
-        "credentials": {
-            "claude_oauth": has_claude,
-            "openrouter": has_or,
-            "anthropic_api_key_shadowing": has_claude and has_anth,
-        },
+        "model": llm.get_active_model(),
+        "mode": _current_mode,
         "clients": len(hub.clients),
         "conversation_length": len(conversation),
     }
@@ -510,7 +610,7 @@ async def speak_endpoint(body: dict[str, Any]) -> dict[str, Any]:
 async def reset() -> dict[str, Any]:
     async with _lock:
         _reset_conversation()
-    await llm.reset_session(forget=True)
+    llm.reset_session()
     await tts.cancel_speaking()
     try:
         HISTORY_PATH.unlink(missing_ok=True)
@@ -522,23 +622,52 @@ async def reset() -> dict[str, Any]:
 
 @app.get("/api/models")
 async def api_models() -> dict[str, Any]:
-    backend = llm._pick_backend()
     return {
         "ok": True,
-        "backend": backend,
+        "backend": llm._pick_backend(),
         "active": llm.get_active_model(),
-        "models": llm.AVAILABLE_CLAUDE_MODELS,
+        "models": llm.get_models(),
     }
 
 
 @app.post("/api/model")
 async def api_set_model(body: dict[str, Any]) -> dict[str, Any]:
     model_id = str(body.get("model", "")).strip()
-    ok = await llm.set_claude_model(model_id)
+    ok = await llm.set_model(model_id)
     if not ok:
         return {"ok": False, "error": f"unknown model: {model_id}"}
-    await hub.broadcast({"type": "model_changed", "model": model_id, "backend": "claude"})
+    await hub.broadcast({"type": "model_changed", "model": model_id, "backend": "hermes"})
     return {"ok": True, "model": model_id}
+
+
+@app.get("/api/mode")
+async def api_get_mode() -> dict[str, Any]:
+    from . import hermes_client
+    modes = ["default"] + sorted(p for p in hermes_client._SESSION_IDS if p not in ("default", "eli6"))
+    return {"ok": True, "mode": _current_mode, "modes": modes}
+
+
+@app.post("/api/mode")
+async def api_set_mode(body: dict[str, Any]) -> dict[str, Any]:
+    """Switch between normal mode and a project work mode.
+
+    Each mode talks to a different Hermes profile (separate memory, session,
+    SOUL.md). The local conversation is cleared on switch so contexts never
+    bleed across modes.
+    """
+    global _current_mode
+    from . import hermes_client
+    mode = str(body.get("mode", "")).strip()
+    if mode not in hermes_client._SESSION_IDS:
+        return {"ok": False, "error": f"unknown mode: {mode}"}
+    if mode == _current_mode:
+        return {"ok": True, "mode": mode}
+    _current_mode = mode
+    async with _lock:
+        _reset_conversation()
+    await tts.cancel_speaking()
+    await hub.broadcast({"type": "mode_changed", "mode": mode})
+    return {"ok": True, "mode": mode}
 
 
 @app.post("/api/shutdown")
@@ -569,6 +698,7 @@ async def api_stop() -> dict[str, Any]:
     if _current_turn_task and not _current_turn_task.done():
         _current_turn_task.cancel()
         cancelled = True
+    await llm.stop_run()
     await tts.cancel_speaking()
     await hub.broadcast({"type": "stopped"})
     return {"ok": True, "cancelled": cancelled}
@@ -614,18 +744,163 @@ async def api_get_persona() -> dict[str, Any]:
 
 @app.post("/api/persona")
 async def api_set_persona(body: dict[str, Any]) -> dict[str, Any]:
-    """Switch persona. Affects system prompt on next turn + frontend UI immediately."""
+    """Switch persona. Routes turns to a different Hermes profile (separate
+    SOUL.md + memory) and resets the local conversation so contexts never
+    bleed across personas."""
     from . import persona
     try:
-        persona.set_persona(body.get("persona", ""))
-        return {"ok": True, "persona": body.get("persona")}
+        new_persona = str(body.get("persona", "")).strip()
+        if new_persona not in persona.VALID:
+            raise ValueError(f"Unknown persona: {new_persona}")
+        if new_persona != persona.get_persona():
+            persona.set_persona(new_persona)
+            async with _lock:
+                _reset_conversation()
+            await tts.cancel_speaking()
+            await hub.broadcast({"type": "persona_changed", "persona": new_persona})
+        return {"ok": True, "persona": new_persona}
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Admin — project onboarding wizard
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/admin/projects")
+async def api_admin_list_projects() -> dict[str, Any]:
+    """List known project profiles (built-in + user-added)."""
+    from .admin.add_project import list_projects
+    return {"ok": True, "projects": list_projects()}
+
+
+@app.post("/api/admin/add_project")
+async def api_admin_add_project(body: dict[str, Any]) -> dict[str, Any]:
+    """Create a new Hermes project profile + register it + restart the gateway.
+
+    Body shape::
+
+        {
+          "name": "finance",            # required, kebab-case
+          "cwd": "C:/.../finance",      # required, absolute path
+          "soul_md": "...",             # required, generated by the UI wizard
+          "api_key": "...",             # optional, auto-generated if empty
+          "model": "gpt-oss:120b",      # optional
+          "provider": "ollama-cloud",   # optional
+          "base_url": "https://...",    # optional
+          "ollama_api_key": "...",      # optional, inherits from default if empty
+          "terminal_backend": "local",  # optional
+          "terminal_timeout": 180,      # optional
+          "notes": "",                  # optional
+          "dry_run": false,             # optional — preview without writing
+          "restart": true,              # optional — restart gateway (default true)
+        }
+    """
+    from .admin.add_project import ProjectSpec, add_project
+
+    name = (body.get("name") or "").strip()
+    cwd = (body.get("cwd") or "").strip()
+    soul_md = body.get("soul_md") or ""
+    if not name or not cwd or not soul_md:
+        return {"ok": False, "error": "name, cwd, and soul_md are required"}
+
+    spec = ProjectSpec(
+        name=name,
+        cwd=cwd,
+        soul_md=soul_md,
+        api_key=body.get("api_key", "") or "",
+        model=body.get("model", "gpt-oss:120b"),
+        provider=body.get("provider", "ollama-cloud"),
+        base_url=body.get("base_url", "https://ollama.com/v1"),
+        ollama_api_key=body.get("ollama_api_key", "") or "",
+        terminal_backend=body.get("terminal_backend", "local"),
+        terminal_timeout=int(body.get("terminal_timeout", 180) or 180),
+        notes=body.get("notes", "") or "",
+    )
+    return add_project(spec,
+                       dry_run=bool(body.get("dry_run", False)),
+                       restart=bool(body.get("restart", True)))
+
+
+@app.post("/api/admin/remove_project")
+async def api_admin_remove_project(body: dict[str, Any]) -> dict[str, Any]:
+    """Delete a user-added project profile. Requires ``confirm=true``."""
+    from .admin.add_project import remove_project
+    name = (body.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "error": "name is required"}
+    return remove_project(name,
+                          confirm=bool(body.get("confirm", False)),
+                          restart=bool(body.get("restart", True)))
+
+
+@app.post("/api/admin/preview_soul")
+async def api_admin_preview_soul(body: dict[str, Any]) -> dict[str, Any]:
+    """Generate a SOUL.md from wizard answers without writing any files."""
+    from .admin.add_project import generate_soul_md
+    text = generate_soul_md(
+        project_title=body.get("project_title", ""),
+        project_description=body.get("project_description", ""),
+        cwd=body.get("cwd", ""),
+        tech_stack=body.get("tech_stack", ""),
+        conventions=body.get("conventions", ""),
+    )
+    return {"ok": True, "soul_md": text}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Subagents (Researcher, Code reviewer, Email assistant, Content writer)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/subagents")
+async def api_subagents() -> dict[str, Any]:
+    """List registered subagents. Used by the orb UI to render quick-launch buttons."""
+    from .subagents import list_subagents
+    return {"ok": True, "subagents": list_subagents()}
+
+
+@app.post("/api/subagent/{name}")
+async def api_subagent_run(name: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Run a subagent turn synchronously (non-streaming). The result is the
+    final assistant text. Use this for short commands from buttons / forms.
+    For long outputs, prefer the WS slash-command path (``/research …``)."""
+    from .subagents import get_subagent, wrap_prompt
+    from . import hermes_client
+
+    spec = get_subagent(name)
+    if spec is None:
+        return {"ok": False, "error": f"unknown subagent: {name}"}
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        return {"ok": False, "error": "prompt is required"}
+
+    from . import persona as _persona_mod
+    persona = _persona_mod.get_persona()
+    mode = _current_mode
+    wrapped = wrap_prompt(spec, prompt)
+
+    # stream_chat returns {"final_text": str, ...} after the turn finishes.
+    # We don't need to subscribe to deltas for this synchronous endpoint.
+    async def _swallow(event: dict[str, Any]) -> None:
+        return None
+
+    msgs = [{"role": "user", "content": wrapped}]
+    result = await hermes_client.stream_chat(msgs, _swallow, mode=mode, persona=persona)
+    return {"ok": True, "subagent": name,
+            "final_text": (result or {}).get("final_text", "")}
+
+
 @app.get("/api/connectors")
 async def api_connectors() -> dict[str, Any]:
-    """List MCP connector integrations and their current (masked) configuration."""
+    """List MCP connector integrations and their current (masked) configuration.
+
+    Each connector gets an extra `mcp_ok` field:
+      true  — configured AND live MCP connection is healthy
+      false — configured BUT MCP connection failed (needs credentials/setup)
+      null  — configured but not via the MCP manager (e.g. HA uses native tools)
+    """
     from .tools import connectors
 
     return connectors.get_connectors_status()
@@ -846,37 +1121,21 @@ async def api_ha_areas(request: Request) -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# MCP status endpoint
-# ──────────────────────────────────────────────────────────────────────────
-
-
-@app.get("/api/mcp/status")
-async def api_mcp_status() -> dict[str, Any]:
-    """Return MCP server connection status and available tool counts."""
-    from . import mcp_manager
-    mgr = mcp_manager.get_manager()
-    if mgr is None:
-        return {"ok": False, "error": "MCP manager not started", "servers": {}}
-    return {"ok": True, **mgr.status()}
-
-
-# ──────────────────────────────────────────────────────────────────────────
 # WebSocket
 # ──────────────────────────────────────────────────────────────────────────
 
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
+    global _current_mode, _current_turn_task
     await ws.accept()
     hub.add(ws)
-    backend = llm._pick_backend()
-    if backend == "claude":
-        active_model = llm.get_active_model()
-    elif backend == "ollama":
-        active_model = llm.DEFAULT_OLLAMA_MODEL
-    else:
-        active_model = llm.DEFAULT_OR_MODEL
-    await ws.send_text(json.dumps({"type": "ready", "model": active_model, "backend": backend}))
+    await ws.send_text(json.dumps({
+        "type": "ready",
+        "model": llm.get_active_model(),
+        "backend": llm._pick_backend(),
+        "mode": _current_mode,
+    }))
 
     # Replay any restored/prior conversation so the UI visually resumes
     # exactly where it left off after a reboot, app restart, or shutdown.
@@ -915,18 +1174,28 @@ async def ws_endpoint(ws: WebSocket) -> None:
             elif mtype == "reset":
                 async with _lock:
                     _reset_conversation()
-                await llm.reset_session(forget=True)
+                llm.reset_session()
                 try:
                     HISTORY_PATH.unlink(missing_ok=True)
                 except Exception:
                     pass
                 await hub.broadcast({"type": "reset"})
             elif mtype == "stop":
-                global _current_turn_task
                 if _current_turn_task and not _current_turn_task.done():
                     _current_turn_task.cancel()
+                await llm.stop_run()
                 await tts.cancel_speaking()
                 await hub.broadcast({"type": "stopped"})
+            elif mtype == "set_mode":
+                mode = str(msg.get("mode", "")).strip()
+                if mode in ("default", "wwf") and mode != _current_mode:
+                    _current_mode = mode
+                    async with _lock:
+                        _reset_conversation()
+                    await tts.cancel_speaking()
+                    await hub.broadcast({"type": "mode_changed", "mode": mode})
+                else:
+                    await ws.send_text(json.dumps({"type": "error", "message": f"unknown mode: {mode}"}))
             elif mtype == "ping":
                 await ws.send_text(json.dumps({"type": "pong", "t": time.time()}))
             else:
@@ -1106,6 +1375,9 @@ async def wake_word_loop() -> None:
             if score >= (silence_threshold / 1000.0):
                 log.info("wake word detected (score=%.2f)", score)
                 await hub.broadcast({"type": "wake", "score": float(score)})
+                # Barge-in: stop any current speech immediately so JARVIS goes
+                # quiet and listens to the new command being spoken.
+                await tts.cancel_speaking()
                 # Preserve any already-buffered audio — the command may have been
                 # spoken immediately after the wake phrase (e.g. "hey jarvis are you online").
                 # Draining would silently discard it.
@@ -1145,23 +1417,8 @@ async def wake_word_loop() -> None:
 
 
 async def _on_startup() -> None:
-    backend = llm._pick_backend()
-    if backend == "claude":
-        log.info("JARVIS online — backend=claude (Pro), model=%s", llm.DEFAULT_CLAUDE_MODEL)
-    elif backend == "openrouter":
-        log.info("JARVIS online — backend=openrouter, model=%s", llm.DEFAULT_OR_MODEL)
-    else:
-        log.warning("JARVIS online but NO LLM CREDENTIALS — set CLAUDE_CODE_OAUTH_TOKEN or OPENROUTER_API_KEY in ~/.jarvis/.env")
-    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") and os.environ.get("ANTHROPIC_API_KEY"):
-        log.warning("ANTHROPIC_API_KEY is set and will shadow your OAuth token — usage will hit API budget, not your Pro plan. unset it.")
-
-    # Start MCP connector manager — makes all connectors (WhatsApp, Gmail,
-    # Playwright, ElevenLabs, Meta Ads, HA MCP) available to every LLM backend.
-    try:
-        from . import mcp_manager
-        await mcp_manager.start()
-    except Exception as exc:
-        log.warning("MCP manager failed to start: %s", exc)
+    log.info("JARVIS online — backend=hermes, model=%s, mode=%s",
+             llm.get_active_model(), _current_mode)
 
     # Restore previous session history
     prev = _load_history()
