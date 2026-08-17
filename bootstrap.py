@@ -435,6 +435,26 @@ def _read_env() -> dict[str, str]:
     return env
 
 
+def hermes_ready() -> bool:
+    """True if Hermes Agent is installed (the JARVIS brain backend)."""
+    if IS_WINDOWS:
+        local = os.environ.get("LOCALAPPDATA")
+        if local and (Path(local) / "hermes" / "hermes-agent" / "bin" / "hermes.exe").exists():
+            return True
+    return shutil.which("hermes") is not None
+
+
+def _configured(env: dict[str, str]) -> bool:
+    """True when any LLM backend is configured (Hermes needs no env vars)."""
+    if env.get("JARVIS_LLM_BACKEND") == "hermes" or hermes_ready():
+        return True
+    return bool(
+        env.get("CLAUDE_CODE_OAUTH_TOKEN")
+        or env.get("OPENROUTER_API_KEY")
+        or env.get("JARVIS_LLM_BACKEND") == "ollama"
+    )
+
+
 def download_piper_binary_windows() -> Path | None:
     """Download the piper.exe release bundle for Windows and unpack it."""
     if shutil.which("piper"):
@@ -936,8 +956,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({
                 "os": "windows" if IS_WINDOWS else "linux",
                 "venv_ready": venv_ready(),
-                "configured": bool(env.get("CLAUDE_CODE_OAUTH_TOKEN") or env.get("OPENROUTER_API_KEY")
-                                   or env.get("JARVIS_LLM_BACKEND") == "ollama"),
+                "configured": _configured(env),
+                "hermes_ready": hermes_ready(),
                 "ollama_models": list_ollama_models(),
                 "state": _state,
                 "env": {k: ("***" if "TOKEN" in k or "KEY" in k else v) for k, v in env.items()},
@@ -1058,7 +1078,7 @@ def main() -> None:
 
     if venv_ready() and _read_env():
         env = _read_env()
-        if env.get("CLAUDE_CODE_OAUTH_TOKEN") or env.get("OPENROUTER_API_KEY") or env.get("JARVIS_LLM_BACKEND") == "ollama":
+        if _configured(env):
             log("Existing setup found — launching JARVIS directly.")
             _state["install_done"] = True
             _httpd = QuietThreadingHTTPServer(("127.0.0.1", PORT), Handler)
