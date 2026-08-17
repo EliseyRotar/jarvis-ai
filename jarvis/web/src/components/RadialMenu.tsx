@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus,
 } from 'lucide-react'
@@ -48,6 +48,17 @@ export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
   }, [open])
 
   const openId = hovered ?? open
+
+  // Stable panel element — same React element reference for the same openId
+  // across renders. Without this, RadialMenu's parent re-renders would
+  // produce a fresh <TasksPanel /> element every time, which can trip
+  // React's hook bookkeeping when the panel happens to also re-render
+  // due to a store update at the same time.
+  const panelContent = useMemo(() => {
+    if (!openId || openId === '__hub__') return null
+    const render = PANEL_CONTENT[openId]
+    return render ? render() : <UnknownPanel id={openId} />
+  }, [openId])
 
   return (
     <>
@@ -115,7 +126,7 @@ export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
             <div className="min-h-0 flex-1 overflow-y-auto">
               {openId === '__hub__' ? <HubPanel onPick={(id) => setOpen(id)} panels={panels} /> : (
                 <PanelErrorBoundary id={openId}>
-                  {PANEL_CONTENT[openId]?.() ?? <UnknownPanel id={openId} />}
+                  {panelContent}
                 </PanelErrorBoundary>
               )}
             </div>

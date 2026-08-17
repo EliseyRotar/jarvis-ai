@@ -4,12 +4,12 @@ import { useJarvisStore } from '@/store/jarvisStore'
 import { registerPanelContent } from './RadialMenu'
 
 function TasksPanel() {
-  const task = useJarvisStore((s) => s.task)
-  const taskHistory = useJarvisStore((s) => s.taskHistory)
-  const [list, setList] = useState(taskHistory.slice(0, 30))
+  const task = useJarvisStore((s) => s.task) ?? null
+  const taskHistory = useJarvisStore((s) => Array.isArray(s.taskHistory) ? s.taskHistory : [])
+  const [list, setList] = useState(() => (taskHistory ?? []).slice(0, 30))
 
   useEffect(() => {
-    setList(taskHistory.slice(0, 30))
+    setList((taskHistory ?? []).slice(0, 30))
   }, [taskHistory])
 
   return (
