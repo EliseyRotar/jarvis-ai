@@ -79,7 +79,7 @@ ROOT = Path(__file__).parent
 STATIC_DIR = ROOT / "static"
 DIST_DIR = STATIC_DIR / "dist"
 # Personal prompt (gitignored) takes priority; fall back to the committed template.
-_PERSONAL_PROMPT = ROOT / "personal info jarvis" / "system_prompt.txt"
+_PERSONAL_PROMPT = ROOT / "personal info cosmo" / "system_prompt.txt"
 SYSTEM_PROMPT_PATH = _PERSONAL_PROMPT if _PERSONAL_PROMPT.exists() else ROOT / "system_prompt.txt"
 HISTORY_PATH = Path.home() / ".jarvis" / "history.json"
 _MAX_HISTORY = 200  # user/assistant messages to persist across reboots
@@ -207,10 +207,10 @@ def _create_task(coro) -> asyncio.Task:
 # JARVIS speaks a short ack the instant a turn starts (masking first-token
 # latency) and again after each action that changes state, so the operator
 # always hears progress.
-_START_ACKS = {
-    "jarvis": ["Right away, sir.", "On it, sir.", "At once.", "Working on it, sir."],
-    "eli6": ["on it.", "got it.", "one sec.", "yep, on it."],
-}
+_START_ACKS = [
+    "On it.", "Working on it.", "Yeah, one sec.", "Got it.", "Yep.", "OK.",
+    "Yeah, doing that now.", "Hang on.",
+]
 # Exact tool names that mutate state → a fitting confirmation phrase.
 _ACTION_PHRASES = {
     "whatsapp_send": "Message sent.",
@@ -226,29 +226,19 @@ _ACTION_SUBSTR = ("turn_on", "turn_off", "toggle", "set_state", "send_message",
                   "press", "open_cover", "close_cover", "set_temperature")
 
 
-def _persona_now() -> str:
-    try:
-        from . import persona
-        return persona.get_persona()
-    except Exception:
-        return "jarvis"
-
-
 def _start_ack_phrase() -> str:
     import random
-    return random.choice(_START_ACKS.get(_persona_now(), _START_ACKS["jarvis"]))
+    return random.choice(_START_ACKS)
 
 
 def _action_ack_phrase(name: str) -> str | None:
     """Short confirmation for a state-changing tool, or None to stay silent."""
     name = name or ""
     if name in _ACTION_PHRASES:
-        phrase = _ACTION_PHRASES[name]
-    elif any(s in name for s in _ACTION_SUBSTR):
-        phrase = "Done."
-    else:
-        return None
-    return phrase.lower() if _persona_now() == "eli6" else phrase
+        return _ACTION_PHRASES[name]
+    if any(s in name for s in _ACTION_SUBSTR):
+        return "Done."
+    return None
 
 
 def _memory_context_block(limit: int = 8) -> str:
@@ -271,13 +261,10 @@ def _memory_context_block(limit: int = 8) -> str:
 
 
 def _load_system_prompt() -> str:
-    from .persona import get_system_prompt
     if SYSTEM_PROMPT_PATH.exists():
-        base = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8") + _memory_context_block()
-    else:
-        log.warning("system_prompt.txt not found, using fallback")
-        base = "You are JARVIS, a helpful Arch Linux system assistant." + _memory_context_block()
-    return get_system_prompt(base)
+        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8") + _memory_context_block()
+    log.warning("system_prompt.txt not found, using fallback")
+    return "You are Cosmo, eli6's direct, truthful assistant." + _memory_context_block()
 
 
 def _save_history() -> None:
@@ -503,7 +490,7 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     _sentence_tasks.append(_create_task(tts.speak(_start_ack_phrase(), lang=detected_lang)))
 
     try:
-        result = await llm.stream_chat(msgs_snapshot, on_event, mode=_current_mode, persona=_persona_now())
+        result = await llm.stream_chat(msgs_snapshot, on_event, mode=_current_mode)
     except Exception as exc:
         log.exception("LLM stream failed")
         await _emit({"type": "error", "message": f"LLM stream failed: {exc}"}, send)
@@ -735,34 +722,6 @@ async def api_memory_delete(key: str) -> dict[str, Any]:
     return {"ok": True}
 
 
-@app.get("/api/persona")
-async def api_get_persona() -> dict[str, Any]:
-    """Return the active persona ('jarvis' or 'eli6')."""
-    from . import persona
-    return {"ok": True, "persona": persona.get_persona()}
-
-
-@app.post("/api/persona")
-async def api_set_persona(body: dict[str, Any]) -> dict[str, Any]:
-    """Switch persona. Routes turns to a different Hermes profile (separate
-    SOUL.md + memory) and resets the local conversation so contexts never
-    bleed across personas."""
-    from . import persona
-    try:
-        new_persona = str(body.get("persona", "")).strip()
-        if new_persona not in persona.VALID:
-            raise ValueError(f"Unknown persona: {new_persona}")
-        if new_persona != persona.get_persona():
-            persona.set_persona(new_persona)
-            async with _lock:
-                _reset_conversation()
-            await tts.cancel_speaking()
-            await hub.broadcast({"type": "persona_changed", "persona": new_persona})
-        return {"ok": True, "persona": new_persona}
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
-
-
 # ──────────────────────────────────────────────────────────────────────────
 # Admin — project onboarding wizard
 # ──────────────────────────────────────────────────────────────────────────
@@ -849,6 +808,90 @@ async def api_admin_preview_soul(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "soul_md": text}
 
 
+@app.get("/api/project/context")
+async def api_project_context(cwd: str = "") -> dict[str, Any]:
+    """Lightweight project context for the orb dashboard widget.
+
+    Returns git branch + last commit for the cwd (if it's a git repo).
+    Designed to never raise — failure to read git just returns nulls.
+    """
+    import asyncio
+    import subprocess
+
+    ctx: dict[str, Any] = {"cwd": cwd, "git_branch": None, "git_last_commit": None}
+    if not cwd or not Path(cwd).is_dir():
+        return ctx
+
+    async def _git(*args: str) -> str:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", cwd, *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=2.0)
+            return stdout.decode("utf-8", "replace").strip()
+        except Exception:
+            return ""
+
+    branch = await _git("rev-parse", "--abbrev-ref", "HEAD")
+    if branch and branch != "HEAD":
+        ctx["git_branch"] = branch
+    last = await _git("log", "-1", "--pretty=%h %s", "--no-color")
+    if last:
+        ctx["git_last_commit"] = last
+    return ctx
+
+
+@app.get("/api/logs")
+async def api_logs(limit: int = 100, filter: str = "") -> dict[str, Any]:
+    """Tail recent JARVIS + Hermes log lines for the orb logs panel.
+
+    Sources: ~/.jarvis/*.log, Hermes gateway.log + agent.log.
+    Capped at `limit` entries (newest first).
+    """
+    import re
+
+    candidates = []
+    home = Path.home() / ".jarvis"
+    if home.is_dir():
+        for p in home.glob("*.log"):
+            try: candidates.append(p)
+            except OSError: pass
+    hermes_logs = Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "logs"
+    if hermes_logs.is_dir():
+        for p in hermes_logs.glob("*.log"):
+            try: candidates.append(p)
+            except OSError: pass
+
+    entries: list[dict[str, Any]] = []
+    rx = re.compile(filter, re.IGNORECASE) if filter else None
+    for path in candidates:
+        try:
+            # Read last ~200 lines of each file (cheap, single pass)
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError:
+            continue
+        for ln in reversed(lines):
+            if rx and not rx.search(ln):
+                continue
+            # Try to parse "[2026-08-17 12:34:56] LEVEL message"
+            m = re.match(r"^[\[(]?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})[\])]?\s+(\w+)?\s*(.*)$", ln)
+            if m:
+                ts_str, level, msg = m.groups()
+                try:
+                    from datetime import datetime
+                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timestamp() * 1000
+                except ValueError:
+                    ts = 0
+                entries.append({"time": ts, "level": level or "INFO", "msg": msg, "source": path.name})
+            else:
+                entries.append({"time": 0, "level": "LOG", "msg": ln, "source": path.name})
+
+    entries.sort(key=lambda e: e["time"], reverse=True)
+    return {"ok": True, "entries": entries[:limit]}
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Subagents (Researcher, Code reviewer, Email assistant, Content writer)
 # ──────────────────────────────────────────────────────────────────────────
@@ -876,8 +919,6 @@ async def api_subagent_run(name: str, body: dict[str, Any]) -> dict[str, Any]:
     if not prompt:
         return {"ok": False, "error": "prompt is required"}
 
-    from . import persona as _persona_mod
-    persona = _persona_mod.get_persona()
     mode = _current_mode
     wrapped = wrap_prompt(spec, prompt)
 
@@ -887,7 +928,7 @@ async def api_subagent_run(name: str, body: dict[str, Any]) -> dict[str, Any]:
         return None
 
     msgs = [{"role": "user", "content": wrapped}]
-    result = await hermes_client.stream_chat(msgs, _swallow, mode=mode, persona=persona)
+    result = await hermes_client.stream_chat(msgs, _swallow, mode=mode)
     return {"ok": True, "subagent": name,
             "final_text": (result or {}).get("final_text", "")}
 
