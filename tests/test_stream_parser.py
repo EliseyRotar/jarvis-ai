@@ -1,5 +1,5 @@
-"""Tests for the streaming tag-aware parser in jarvis.llm."""
-from jarvis.llm import StreamParser
+"""Tests for the streaming tag-aware parser in jarvis.stream_parser."""
+from jarvis.stream_parser import StreamParser
 
 
 def _collect(*chunks):
