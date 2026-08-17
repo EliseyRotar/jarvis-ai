@@ -34,6 +34,7 @@ export function TerminalLayout() {
   const activeModel = useJarvisStore((s) => s.activeModel)
   const turnActive = useJarvisStore((s) => s.turnActive)
   const speaking = useJarvisStore((s) => s.speaking)
+  const setUiMode = useJarvisStore((s) => s.setUiMode)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [startedAt] = useState(() => Date.now())
 
@@ -85,6 +86,14 @@ export function TerminalLayout() {
               {label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            onClick={() => setUiMode('orb')}
+            className="text-[var(--text-dim)] transition hover:text-[var(--text)]"
+            title="Switch to the Orb console"
+          >
+            ◉ orb
+          </button>
         </nav>
       </header>
 
