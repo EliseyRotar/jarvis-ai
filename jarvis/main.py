@@ -1504,6 +1504,14 @@ async def _on_startup() -> None:
 
     _create_task(_prewarm_stt())
     _create_task(wake_word_loop())
+    # Pre-warm the cloud LLM so the user's first typed question doesn't pay
+    # the model's cold-start cost (typically 2-4s on Ollama Cloud).
+    from .hermes_client import warmup_model
+    async def _prewarm_llm() -> None:
+        # Small delay so it doesn't compete with STT/TTS loads.
+        await asyncio.sleep(2)
+        await warmup_model()
+    _create_task(_prewarm_llm())
 
     # Scheduler: fire saved prompts on their schedule, streaming to the HUD.
     async def _fire_scheduled(prompt: str) -> None:
