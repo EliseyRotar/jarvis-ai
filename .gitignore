@@ -72,6 +72,11 @@ logs/
 OpenJarvis/
 addons.txt
 
+# ── Reference projects cloned for study (never pushed) ──────────────────────
+# J.A.R.V.I.S / Mark-XL / OpenJarvis — third-party code, big binaries,
+# and their own .git repos. Local reference material only.
+Other/
+
 # ── WhatsApp bridge (vendored from lharries/whatsapp-mcp) ───────────────────
 # Built binaries (run.sh / run.ps1 build these on first run) and runtime data
 # (session DB, message history, downloaded media, QR code) never get committed.
