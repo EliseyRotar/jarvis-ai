@@ -81,10 +81,13 @@ async def handle_voice_intent(
             return True
         # Switch via HTTP-style call: we can't easily reach the FastAPI handler
         # from inside this module without circular deps, so we just call the
-        # underlying state-mutator exposed in main.py.
+        # underlying state-mutator exposed in main.py. Mirror POST /api/mode:
+        # hold _lock while resetting and cancel any in-flight speech first.
         from . import main as _main
-        _main._current_mode = name
-        _main._reset_conversation()
+        await _main.tts.cancel_speaking()
+        async with _main._lock:
+            _main._current_mode = name
+            _main._reset_conversation()
         await _main.hub.broadcast({"type": "mode_changed", "mode": name})
         if send:
             await send({"type": "toast", "kind": "ok", "message": f"Mode: {name}"})
