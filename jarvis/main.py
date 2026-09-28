@@ -335,6 +335,12 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     """Run a full LLM + tool turn, streaming events to `send` (a callable
     awaiting a dict) and broadcasting to all other clients."""
     global _current_lang, _current_turn_task
+
+    # Empty input must NOT barge-in: cancelling the live turn and then
+    # returning would leave the UI stuck in turnActive/speaking.
+    if not text.strip():
+        return
+
     # Barge-in: a new request supersedes any still-running turn. Cancel the old
     # one so we don't get two overlapping responses/voices (also fixes the
     # concurrent-turn race where _current_turn_task was silently overwritten).
@@ -342,9 +348,6 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     if _prev_turn is not None and not _prev_turn.done() and _prev_turn is not asyncio.current_task():
         _prev_turn.cancel()
     _current_turn_task = asyncio.current_task()
-
-    if not text.strip():
-        return
 
     # Stop any ongoing speech from the previous turn immediately
     await tts.cancel_speaking()
@@ -374,7 +377,11 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     intent = classify(text)
     if intent is not None:
         intent_name, groups = intent
-        handled = await handle_voice_intent(intent_name, groups, send=send, broadcast=hub.broadcast)
+        # send may be None (WS turns) — voice-intent toasts still need a sink,
+        # so fall back to the hub; dicts must never reach ws.send_text.
+        handled = await handle_voice_intent(intent_name, groups,
+                                            send=send if send is not None else hub.broadcast,
+                                            broadcast=hub.broadcast)
         if handled:
             await _emit({"type": "transcript", "text": text, "voice": voice}, send)
             await _emit({"type": "turn_start", "voice": voice}, send)
@@ -494,6 +501,12 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     except Exception as exc:
         log.exception("LLM stream failed")
         await _emit({"type": "error", "message": f"LLM stream failed: {exc}"}, send)
+        # Never leave the UI hanging in speaking/turnActive on failure.
+        for t in _sentence_tasks:
+            t.cancel()
+        await tts.cancel_speaking()
+        await _emit({"type": "turn_end", "final_text": "", "elapsed": round(time.time() - started, 2)}, send)
+        await _emit({"type": "speaking", "state": "end"}, send)
         return
 
     async with _lock:
@@ -531,14 +544,18 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
 
 async def _emit(msg: dict[str, Any], send: Any) -> None:
-    """Broadcast a message to all connected clients.
+    """Deliver ``msg`` to the originating sink, falling back to broadcast.
 
-    The originating WebSocket is already in ``hub.clients``, so a single
-    broadcast covers it — sending directly via ``send`` would double-deliver.
-    The ``send`` parameter is kept for API compatibility with callers (e.g.
-    the wake-word loop) that don't have a WS connection of their own.
+    ``send`` is an optional dict-taking sink (the Telegram capture, the
+    scheduler's ``hub.broadcast``, …). When it is provided it owns delivery —
+    Telegram's ``_capture`` both broadcasts to the HUD and records the final
+    text for the phone reply. When it is ``None`` (WebSocket turns), a plain
+    broadcast reaches every client including the originator.
     """
-    await hub.broadcast(msg)
+    if send is not None:
+        await send(msg)
+    else:
+        await hub.broadcast(msg)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -858,9 +875,15 @@ async def api_admin_add_project(body: dict[str, Any]) -> dict[str, Any]:
         terminal_timeout=int(body.get("terminal_timeout", 180) or 180),
         notes=body.get("notes", "") or "",
     )
-    return add_project(spec,
-                       dry_run=bool(body.get("dry_run", False)),
-                       restart=bool(body.get("restart", True)))
+    # add/remove shell out to powershell + poll the gateway with sleeps —
+    # up to ~60s. Run in a worker thread or the event loop (STT/TTS/WS)
+    # freezes for the whole duration.
+    return await asyncio.to_thread(
+        add_project,
+        spec,
+        dry_run=bool(body.get("dry_run", False)),
+        restart=bool(body.get("restart", True)),
+    )
 
 
 @app.post("/api/admin/remove_project")
@@ -870,9 +893,12 @@ async def api_admin_remove_project(body: dict[str, Any]) -> dict[str, Any]:
     name = (body.get("name") or "").strip()
     if not name:
         return {"ok": False, "error": "name is required"}
-    return remove_project(name,
-                          confirm=bool(body.get("confirm", False)),
-                          restart=bool(body.get("restart", True)))
+    return await asyncio.to_thread(
+        remove_project,
+        name,
+        confirm=bool(body.get("confirm", False)),
+        restart=bool(body.get("restart", True)),
+    )
 
 
 @app.post("/api/admin/preview_soul")
@@ -945,30 +971,50 @@ async def api_logs(limit: int = 100, filter: str = "") -> dict[str, Any]:
             try: candidates.append(p)
             except OSError: pass
 
-    entries: list[dict[str, Any]] = []
-    rx = re.compile(filter, re.IGNORECASE) if filter else None
-    for path in candidates:
+    # User-typed filter must not 500 the endpoint on an invalid regex
+    # (e.g. "(" or "["): fall back to literal case-insensitive substring.
+    rx: Any = None
+    if filter:
         try:
-            # Read last ~200 lines of each file (cheap, single pass)
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
-        except OSError:
-            continue
-        for ln in reversed(lines):
-            if rx and not rx.search(ln):
-                continue
-            # Try to parse "[2026-08-17 12:34:56] LEVEL message"
-            m = re.match(r"^[\[(]?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})[\])]?\s+(\w+)?\s*(.*)$", ln)
-            if m:
-                ts_str, level, msg = m.groups()
-                try:
-                    from datetime import datetime
-                    ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timestamp() * 1000
-                except ValueError:
-                    ts = 0
-                entries.append({"time": ts, "level": level or "INFO", "msg": msg, "source": path.name})
-            else:
-                entries.append({"time": 0, "level": "LOG", "msg": ln, "source": path.name})
+            rx = re.compile(filter, re.IGNORECASE)
+        except re.error:
+            rx = filter.lower()
 
+    def _match(ln: str) -> bool:
+        if rx is None:
+            return True
+        if isinstance(rx, str):
+            return rx in ln.lower()
+        return rx.search(ln) is not None
+
+    def _collect() -> list[dict[str, Any]]:
+        # Runs in a worker thread: each file can be MBs (rotated Hermes logs),
+        # and reading them inline stalled the event loop (STT/TTS/WS freezes).
+        out: list[dict[str, Any]] = []
+        for path in candidates:
+            try:
+                # Read last ~200 lines of each file (cheap, single pass)
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+            except OSError:
+                continue
+            for ln in reversed(lines):
+                if not _match(ln):
+                    continue
+                # Try to parse "[2026-08-17 12:34:56] LEVEL message"
+                m = re.match(r"^[\[(]?(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})[\])]?\s+(\w+)?\s*(.*)$", ln)
+                if m:
+                    ts_str, level, msg = m.groups()
+                    try:
+                        from datetime import datetime
+                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").timestamp() * 1000
+                    except ValueError:
+                        ts = 0
+                    out.append({"time": ts, "level": level or "INFO", "msg": msg, "source": path.name})
+                else:
+                    out.append({"time": 0, "level": "LOG", "msg": ln, "source": path.name})
+        return out
+
+    entries = await asyncio.to_thread(_collect)
     entries.sort(key=lambda e: e["time"], reverse=True)
     return {"ok": True, "entries": entries[:limit]}
 
@@ -1267,6 +1313,38 @@ async def api_ha_areas(request: Request) -> dict[str, Any]:
 # ──────────────────────────────────────────────────────────────────────────
 
 
+def _valid_modes() -> set[str]:
+    """Profile names accepted by set_mode (WS) / api_set_mode (HTTP)."""
+    from . import hermes_client
+    return set(hermes_client._SESSION_IDS)
+
+
+async def _transcribe_and_turn(b64: str, ws: WebSocket) -> None:
+    """Decode + transcribe a pushed-audio frame in its own task.
+
+    The WS receive loop used to await STT inline — medium.en takes 1-4s on
+    CPU, during which stop/reset/follow-up messages sat unread in the socket.
+    """
+    global _current_lang
+    import base64 as _b64
+    try:
+        pcm = _b64.b64decode(b64)
+        stt_result = await get_stt().transcribe_pcm(pcm)
+        text = stt_result.get("text", "").strip()
+        if text:
+            detected = stt_result.get("language", "en") or "en"
+            _current_lang = detected
+            await hub.broadcast({"type": "stt_language", "lang": detected,
+                                 "prob": stt_result.get("language_probability", 1.0)})
+            await handle_user_turn(text, voice=True, send=hub.broadcast)
+    except Exception as exc:
+        log.exception("STT failed")
+        try:
+            await hub.broadcast({"type": "error", "message": f"STT failed: {exc}"})
+        except Exception:
+            pass
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     global _current_mode, _current_turn_task
@@ -1307,23 +1385,16 @@ async def ws_endpoint(ws: WebSocket) -> None:
             if mtype == "user_text":
                 text = msg.get("text", "")
                 voice = bool(msg.get("voice"))
-                _create_task(handle_user_turn(text, voice=voice, send=ws.send_text))
+                # send takes dicts (voice-intent toasts); hub.broadcast reaches
+                # this client too because the socket is registered with the hub.
+                _create_task(handle_user_turn(text, voice=voice, send=hub.broadcast))
             elif mtype == "user_audio_pcm":
                 import base64
                 b64 = msg.get("data", "")
-                try:
-                    pcm = base64.b64decode(b64)
-                    stt_result = await get_stt().transcribe_pcm(pcm)
-                    text = stt_result.get("text", "").strip()
-                    if text:
-                        detected = stt_result.get("language", "en") or "en"
-                        global _current_lang
-                        _current_lang = detected
-                        await hub.broadcast({"type": "stt_language", "lang": detected,
-                                             "prob": stt_result.get("language_probability", 1.0)})
-                        _create_task(handle_user_turn(text, voice=True, send=ws.send_text))
-                except Exception as exc:
-                    await ws.send_text(json.dumps({"type": "error", "message": f"STT failed: {exc}"}))
+                # Transcribe off the receive loop: medium.en takes 1-4s on CPU
+                # and used to block stop/reset/follow-up messages for that
+                # whole window. The receive pump stays responsive.
+                _create_task(_transcribe_and_turn(b64, ws))
             elif mtype == "reset":
                 async with _lock:
                     _reset_conversation()
@@ -1341,14 +1412,22 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 await hub.broadcast({"type": "stopped"})
             elif mtype == "set_mode":
                 mode = str(msg.get("mode", "")).strip()
-                if mode in ("default", "wwf") and mode != _current_mode:
+                if mode not in _valid_modes():
+                    await ws.send_text(json.dumps({"type": "error", "message": f"unknown mode: {mode}"}))
+                elif mode != _current_mode:
                     _current_mode = mode
                     async with _lock:
                         _reset_conversation()
                     await tts.cancel_speaking()
                     await hub.broadcast({"type": "mode_changed", "mode": mode})
+                # re-selecting the active mode is a no-op, not an error
+            elif mtype == "set_model":
+                model_id = str(msg.get("model", "")).strip()
+                ok = await llm.set_model(model_id)
+                if ok:
+                    await hub.broadcast({"type": "model_changed", "model": model_id, "backend": "hermes"})
                 else:
-                    await ws.send_text(json.dumps({"type": "error", "message": f"unknown mode: {mode}"}))
+                    await ws.send_text(json.dumps({"type": "error", "message": f"unknown model: {model_id}"}))
             elif mtype == "ping":
                 await ws.send_text(json.dumps({"type": "pong", "t": time.time()}))
             else:
@@ -1449,6 +1528,7 @@ async def wake_word_loop() -> None:
     All heavy lifting runs on threads so we don't block the event loop.
     If any dependency is missing, this coroutine exits quietly.
     """
+    global _current_lang  # assignment below must update the module-level TTS language
     if os.environ.get("JARVIS_DISABLE_WAKEWORD") == "1":
         log.info("wake-word loop disabled via env")
         return
