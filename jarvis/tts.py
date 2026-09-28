@@ -204,6 +204,7 @@ async def _speak_edge(text: str, gen: int, lang: str = "en") -> dict[str, Any]:
 
     voice = _pick_edge_voice(lang)
     global _current_proc
+    proc: asyncio.subprocess.Process | None = None
     try:
         communicate = edge_tts.Communicate(text, voice)
 
@@ -220,12 +221,6 @@ async def _speak_edge(text: str, gen: int, lang: str = "en") -> dict[str, Any]:
 
         async for chunk in communicate.stream():
             if _generation != gen:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-                await proc.wait()
-                _current_proc = None
                 return {"ok": True, "skipped": True, "reason": "superseded"}
             if chunk["type"] == "audio":
                 try:
@@ -239,13 +234,28 @@ async def _speak_edge(text: str, gen: int, lang: str = "en") -> dict[str, Any]:
         except Exception:
             pass
         await proc.wait()
-        _current_proc = None
+        return {"ok": True, "engine": "edge-tts", "voice": voice}
 
     except Exception as exc:
-        _current_proc = None
         return {"ok": False, "error": f"edge-tts failed: {exc}"}
-
-    return {"ok": True, "engine": "edge-tts", "voice": voice}
+    finally:
+        # CancelledError (barge-in) skips the except block — the player would
+        # otherwise keep playing orphaned audio into the next turn. Always
+        # reap the process and clear the module slot.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        if _current_proc is proc:
+            _current_proc = None
 
 
 # ── piper engine ──────────────────────────────────────────────────────────
@@ -268,6 +278,17 @@ async def _speak_piper(text: str, lang: str, gen: int) -> dict[str, Any]:
     player_args = shlex.split(player_cmd, posix=not IS_WINDOWS)
 
     global _current_proc
+    piper_proc: asyncio.subprocess.Process | None = None
+    player_proc: asyncio.subprocess.Process | None = None
+
+    def _kill(p: asyncio.subprocess.Process | None) -> None:
+        if p is None or p.returncode is not None:
+            return
+        try:
+            p.terminate()
+        except Exception:
+            pass
+
     try:
         piper_proc = await asyncio.create_subprocess_exec(
             *piper_args,
@@ -282,20 +303,41 @@ async def _speak_piper(text: str, lang: str, gen: int) -> dict[str, Any]:
             stderr=asyncio.subprocess.DEVNULL,
         )
     except Exception as exc:
+        _kill(piper_proc)
         return {"ok": False, "error": f"spawn failed: {exc}"}
 
+    # Barge-in landed while spawning — don't start playback at all.
+    if _generation != gen:
+        _kill(piper_proc)
+        _kill(player_proc)
+        return {"ok": True, "skipped": True, "reason": "superseded"}
+
     _current_proc = piper_proc
-    assert piper_proc.stdin is not None
     try:
+        assert piper_proc.stdin is not None
         piper_proc.stdin.write(text.encode("utf-8"))
         await piper_proc.stdin.drain()
         piper_proc.stdin.close()
-    except (BrokenPipeError, ConnectionResetError):
+    except (BrokenPipeError, ConnectionResetError, ValueError):
         pass
 
-    _, err = await piper_proc.communicate()
-    await player_proc.wait()
-    _current_proc = None
+    err = b""
+    try:
+        _, err = await piper_proc.communicate()
+        # Watch playback: previously piper never re-checked _generation, so a
+        # barge-in during synthesis let stale audio play into the new turn.
+        while player_proc.returncode is None:
+            if _generation != gen:
+                _kill(player_proc)
+                break
+            await asyncio.sleep(0.15)
+        await player_proc.wait()
+    finally:
+        # CancelledError path: reap both children or they leak as orphans.
+        _kill(piper_proc)
+        _kill(player_proc)
+        if _current_proc is piper_proc:
+            _current_proc = None
 
     rc = piper_proc.returncode
     if rc not in (0, -15, None):  # -15 = SIGTERM (cancelled gracefully)
