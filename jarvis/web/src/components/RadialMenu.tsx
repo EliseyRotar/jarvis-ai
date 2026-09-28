@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus,
 } from 'lucide-react'
@@ -19,10 +20,16 @@ const ICONS: Record<string, typeof FolderGit2> = {
   settings: Settings,
 }
 
-const PANEL_CONTENT: Record<string, () => React.ReactNode> = {}
+const PANEL_CONTENT: Record<string, React.ComponentType> = {}
 
-export function registerPanelContent(id: string, render: () => React.ReactNode) {
-  PANEL_CONTENT[id] = render
+/** Panels register their COMPONENT (LogsPanel, SettingsPanel, …). They must
+ *  be rendered as elements (<Comp />), never invoked as plain functions:
+ *  calling LogsPanel() from inside RadialMenu's render put the panel's hooks
+ *  on RadialMenu's hook list, so the first open of any hook-using panel
+ *  crashed with React #310 ("Rendered more hooks than during the previous
+ *  render"). */
+export function registerPanelContent(id: string, Comp: React.ComponentType) {
+  PANEL_CONTENT[id] = Comp
 }
 
 /** Wrap a registered panel in its own ErrorBoundary so a single panel crash
@@ -48,17 +55,7 @@ export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
   }, [open])
 
   const openId = hovered ?? open
-
-  // Stable panel element — same React element reference for the same openId
-  // across renders. Without this, RadialMenu's parent re-renders would
-  // produce a fresh <TasksPanel /> element every time, which can trip
-  // React's hook bookkeeping when the panel happens to also re-render
-  // due to a store update at the same time.
-  const panelContent = useMemo(() => {
-    if (!openId || openId === '__hub__') return null
-    const render = PANEL_CONTENT[openId]
-    return render ? render() : <UnknownPanel id={openId} />
-  }, [openId])
+  const PanelComp = openId && openId !== '__hub__' ? PANEL_CONTENT[openId] : undefined
 
   return (
     <>
@@ -101,38 +98,46 @@ export function RadialMenu({ panels }: { panels: RadialPanel[] }) {
         })}
       </div>
 
-      {/* Floating panel — renders the requested panel content */}
-      {openId && (
-        <div className="pointer-events-auto absolute right-0 top-0 z-30 h-full w-[420px] max-w-[80vw] animate-[slide-in-right_0.25s_ease-out] border-l border-[var(--line-bright)] bg-black/85 backdrop-blur-xl">
-          <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-3.5">
-              <div className="flex items-center gap-2 font-display text-[12px] uppercase tracking-[0.24em] text-[var(--blue)]">
-                {(() => {
-                  const p = panels.find((p) => p.id === openId)
-                  if (!p) return <span>menu</span>
-                  const Icon = ICONS[p.icon] ?? Settings
-                  return <><Icon size={13} /> {p.label}</>
-                })()}
+      {/* Floating panel — renders the requested panel content.
+          Portaled to <body>: RadialMenu is mounted inside an absolutely
+          positioned ~48px hub wrapper (with a transform), which was BOTH the
+          containing block for `absolute h-full` (panel collapsed to one
+          button tall) AND, being transformed, would have captured any
+          `fixed` child too. The portal escapes both, so `fixed inset-y-0`
+          really is full viewport height. */}
+      {openId &&
+        createPortal(
+          <div className="pointer-events-auto fixed inset-y-0 right-0 z-40 h-screen w-full max-w-[80vw] animate-[slide-in-right_0.25s_ease-out] border-l border-[var(--line-bright)] bg-black/85 backdrop-blur-xl sm:w-[420px]">
+            <div className="flex h-full flex-col">
+              <div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-3.5">
+                <div className="flex items-center gap-2 font-display text-[12px] uppercase tracking-[0.24em] text-[var(--blue)]">
+                  {(() => {
+                    const p = panels.find((p) => p.id === openId)
+                    if (!p) return <span>menu</span>
+                    const Icon = ICONS[p.icon] ?? Settings
+                    return <><Icon size={13} /> {p.label}</>
+                  })()}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpen(null)}
+                  className="rounded-sm border border-[var(--line-bright)] p-1 text-[var(--text-dim)] hover:border-[var(--blue)] hover:text-[var(--blue)]"
+                  title="Close panel (Esc)"
+                >
+                  <X size={14} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => setOpen(null)}
-                className="rounded-sm border border-[var(--line-bright)] p-1 text-[var(--text-dim)] hover:border-[var(--blue)] hover:text-[var(--blue)]"
-                title="Close panel (Esc)"
-              >
-                <X size={14} />
-              </button>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {openId === '__hub__' ? <HubPanel onPick={(id) => setOpen(id)} panels={panels} /> : (
+                  <PanelErrorBoundary id={openId}>
+                    {PanelComp ? <PanelComp key={openId} /> : <UnknownPanel id={openId} />}
+                  </PanelErrorBoundary>
+                )}
+              </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {openId === '__hub__' ? <HubPanel onPick={(id) => setOpen(id)} panels={panels} /> : (
-                <PanelErrorBoundary id={openId}>
-                  {panelContent}
-                </PanelErrorBoundary>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   )
 }
