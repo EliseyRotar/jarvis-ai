@@ -238,6 +238,9 @@ function handleMessage(msg: any) {
       set({ ready: true, reactor: 'ONLINE' })
       if (msg.model) set({ activeModel: msg.model })
       if (msg.mode) set({ mode: msg.mode })
+      // Fresh model list on every (re)connect — loadModels was defined but
+      // never called, so the settings dropdown was permanently empty.
+      void loadModels()
       // Surface admin status as a toast so the operator can see
       // at a glance whether Cosmo is running elevated or not.
       if (msg.admin) {
@@ -253,7 +256,10 @@ function handleMessage(msg: any) {
       break
     case 'mode_changed':
       set({ mode: msg.mode })
-      get().pushToast(msg.mode === 'wwf' ? 'Work mode: WWF Crotone' : 'Normal mode', 'ok')
+      get().pushToast(
+        msg.mode === 'wwf' ? 'Work mode: WWF Crotone' : `Mode: ${msg.mode}`,
+        'ok',
+      )
       break
     case 'history': {
       const messages = msg.messages || []
@@ -375,6 +381,12 @@ function handleMessage(msg: any) {
       break
     case 'error':
       get().pushToast(msg.message || 'An error occurred', 'err')
+      break
+    case 'toast':
+      // Voice intents / backend actions send {type:'toast', kind, message};
+      // it was silently dropped before (no handler), so confirmations like
+      // "Mode: wwf" never appeared.
+      get().pushToast(msg.message || '', msg.kind || 'info')
       break
     default:
       break
