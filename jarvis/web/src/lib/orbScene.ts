@@ -711,8 +711,13 @@ export function createOrbScene(
     const wwf = st.mode === "wwf";
 
     // Wake flash: a bright surge right after the wake word fires.
-    if (st.wakeFlash > 0 && t - st.wakeFlash < 1.2) {
-      wakeEnergy = Math.max(wakeEnergy, 1 - (t - st.wakeFlash) / 1.2);
+    // st.wakeFlash is Date.now() (epoch ms) while t is THREE.Clock elapsed
+    // seconds — subtracting them made the condition permanently true and
+    // wakeEnergy overflowed (~1e12), pinning the orb at max energy forever
+    // after the first wake. Compare in wall-clock ms instead, and clamp.
+    const wakeAgeMs = st.wakeFlash > 0 ? Date.now() - st.wakeFlash : Infinity;
+    if (wakeAgeMs < 1200) {
+      wakeEnergy = Math.min(1, Math.max(wakeEnergy, 1 - wakeAgeMs / 1200));
     } else {
       wakeEnergy *= 0.92;
     }
