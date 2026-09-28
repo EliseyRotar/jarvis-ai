@@ -101,6 +101,20 @@ export function OrbCanvas() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Never steal keys from text entry (inputs, textareas, contentEditable
+      // or shortcuts like Ctrl+R) — typing "g" in a field used to toggle
+      // hand-gestures mid-word.
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      const tgt = e.target as HTMLElement | null
+      if (
+        tgt &&
+        (tgt.tagName === 'INPUT' ||
+          tgt.tagName === 'TEXTAREA' ||
+          tgt.tagName === 'SELECT' ||
+          tgt.isContentEditable)
+      ) {
+        return
+      }
       if (e.key === 'g' || e.key === 'G') setGestures((v) => !v)
       if (e.key === 'r' || e.key === 'R') sceneRef.current?.resetView()
       if (e.key === '+') sceneRef.current?.zoomIn()
