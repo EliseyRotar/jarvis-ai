@@ -33,6 +33,41 @@ function stateWord(speaking: boolean, listening: boolean, thinking: boolean): st
 
 // ── Dashboard widgets ─────────────────────────────────────────────────────
 
+/** Toast notifications. The store has collected toasts since day one but
+ *  nothing ever rendered them — voice-intent confirmations ("Mode: wwf"),
+ *  model switches and errors all vanished silently. */
+function ToastStack() {
+  const toasts = useJarvisStore((s) => s.toasts)
+  const dismiss = useJarvisStore((s) => s.dismissToast)
+  if (!toasts.length) return null
+  const kindCls: Record<string, string> = {
+    ok: 'border-[var(--green)] text-[var(--green)]',
+    err: 'border-[var(--red)] text-[var(--red)]',
+    error: 'border-[var(--red)] text-[var(--red)]',
+    warn: 'border-[var(--amber)] text-[var(--amber)]',
+    warning: 'border-[var(--amber)] text-[var(--amber)]',
+    info: 'border-[var(--blue)] text-[var(--blue)]',
+  }
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-14 z-50 flex w-[min(92vw,520px)] -translate-x-1/2 flex-col items-center gap-1.5">
+      {toasts.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => dismiss(t.id)}
+          className={cn(
+            'pointer-events-auto w-full animate-[slide-in-right_0.2s_ease-out] rounded-sm border bg-black/85 px-4 py-2 text-center font-mono text-[11px] tracking-[0.06em] backdrop-blur-md',
+            kindCls[t.kind] || kindCls.info,
+          )}
+          title="Dismiss"
+        >
+          {t.message}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function ClockWidget() {
   const [time, setTime] = useState(new Date())
   useEffect(() => {
@@ -372,19 +407,23 @@ export function OrbConsole() {
         <ErrorBoundary compact label="clock"><ClockWidget /></ErrorBoundary>
       </div>
 
-      {/* Upper-left rail: project + system stats */}
-      <div className="absolute left-5 top-20 z-10 flex flex-col gap-2.5">
+      {/* Toast notifications (voice intents, model/mode switches, errors) */}
+      <ErrorBoundary compact label="toasts"><ToastStack /></ErrorBoundary>
+
+      {/* Upper-left rail: project + system stats (hidden on phones — the
+          rails overlapped the orb below md) */}
+      <div className="absolute left-5 top-20 z-10 hidden flex-col gap-2.5 md:flex">
         <ErrorBoundary compact label="project"><ProjectContextWidget /></ErrorBoundary>
         <ErrorBoundary compact label="system"><SystemStatsWidget /></ErrorBoundary>
       </div>
 
       {/* Upper-right rail: weather */}
-      <div className="absolute right-5 top-20 z-10 flex flex-col gap-2.5">
+      <div className="absolute right-5 top-20 z-10 hidden flex-col gap-2.5 md:flex">
         <ErrorBoundary compact label="weather"><WeatherWidget /></ErrorBoundary>
       </div>
 
       {/* Lower-left: activity feed */}
-      <div className="absolute left-5 top-[60%] z-10 w-[220px] -translate-y-1/2">
+      <div className="absolute left-5 top-[60%] z-10 hidden w-[220px] -translate-y-1/2 lg:block">
         <ErrorBoundary compact label="activity"><ActivityWidget /></ErrorBoundary>
       </div>
 
