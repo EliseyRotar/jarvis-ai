@@ -165,6 +165,7 @@ _SESSION_IDS.setdefault("wwf", "jarvis-orb-wwf")
 _SESSION_IDS.setdefault("eli6", "jarvis-orb-eli6")
 
 _active_run_id: str | None = None
+_active_run_profile: str | None = None
 _active_run_lock = asyncio.Lock()
 
 
@@ -229,13 +230,18 @@ def reset_session() -> None:
 
 async def stop_run() -> bool:
     """Interrupt the currently active Hermes run (barge-in / STOP button)."""
-    global _active_run_id
+    global _active_run_id, _active_run_profile
     async with _active_run_lock:
         run_id = _active_run_id
+        profile = _active_run_profile
     if not run_id:
         return False
     url = f"{HERMES_URL}/v1/runs/{run_id}/stop"
-    headers = {"Authorization": f"Bearer {_KEYS['default']}"}
+    # Authenticate with the key of the profile that started the run: using
+    # _KEYS['default'] 401'd whenever the active run belonged to any other
+    # profile (wwf, custom projects), silently breaking STOP there.
+    key = _KEYS.get(profile or "default") or _KEYS.get("default")
+    headers = {"Authorization": f"Bearer {key}"}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -422,7 +428,7 @@ async def stream_chat(
     Returns the same shape as the old llm.stream_chat:
         {"messages": [...], "final_text": "..."}
     """
-    global _active_run_id
+    global _active_run_id, _active_run_profile
 
     profile = _resolve_profile(mode)
     key = _profile_key(profile)
@@ -431,14 +437,23 @@ async def stream_chat(
         return {"messages": messages, "final_text": ""}
 
     # Split: last user message = input, everything before = history.
+    # System messages are NOT sent as history: Hermes enforces strict role
+    # alternation and would reject them. They ride along as the request's
+    # ephemeral system_message instead (the chat/stream API field), so the
+    # local system prompt (Cosmo persona + memory context) finally reaches
+    # the model instead of being dropped on the floor.
     history: list[dict[str, str]] = []
+    system_parts: list[str] = []
     user_message = ""
     for m in messages:
         role = m.get("role")
         content = m.get("content")
         if not isinstance(content, str):
             content = json.dumps(content, ensure_ascii=False)
-        if role == "user":
+        if role == "system":
+            if content.strip():
+                system_parts.append(content)
+        elif role == "user":
             if user_message:
                 history.append({"role": "user", "content": user_message})
             user_message = content
@@ -447,7 +462,6 @@ async def stream_chat(
                 history.append({"role": "user", "content": user_message})
                 user_message = ""
             history.append({"role": "assistant", "content": content})
-        # system messages are dropped — Hermes has its own SOUL.md
 
     if not user_message:
         await on_event({"type": "error", "message": "No user message to send"})
@@ -478,6 +492,8 @@ async def stream_chat(
             }
             if history:
                 body["conversation_history"] = history[-40:]
+            if system_parts:
+                body["system_message"] = "\n\n".join(system_parts)
 
             async with session.post(
                 f"{base}/api/sessions/{session_id}/chat/stream",
@@ -495,6 +511,7 @@ async def stream_chat(
                         if run_id:
                             async with _active_run_lock:
                                 _active_run_id = run_id
+                                _active_run_profile = profile
                     elif event_name == "assistant.delta":
                         delta = payload.get("delta", "")
                         if delta:
@@ -557,6 +574,7 @@ async def stream_chat(
     finally:
         async with _active_run_lock:
             _active_run_id = None
+            _active_run_profile = None
 
     elapsed = round(time.time() - started, 2)
     log.info("hermes turn done in %.2fs (profile=%s)", elapsed, profile)
