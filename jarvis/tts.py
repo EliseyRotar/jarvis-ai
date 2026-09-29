@@ -145,6 +145,10 @@ EDGE_VOICE      = os.environ.get("JARVIS_EDGE_VOICE",    "en-GB-RyanNeural")
 EDGE_VOICE_IT   = os.environ.get("JARVIS_EDGE_VOICE_IT", "it-IT-DiegoNeural")
 EDGE_VOICE_RU   = os.environ.get("JARVIS_EDGE_VOICE_RU", "ru-RU-DmitryNeural")
 
+# Silent mode: JARVIS_TTS_MUTE=1 skips every utterance (unattended runs,
+# night-time automation) while the speaking events still flow to the UI.
+TTS_MUTED = os.environ.get("JARVIS_TTS_MUTE", "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 def _pick_edge_voice(lang: str) -> str:
     """Return the edge-tts voice for the given language code."""
@@ -384,6 +388,8 @@ async def speak(text: str, lang: str = "en") -> dict[str, Any]:
     this speak() was queued — generation mismatch detected before and
     during playback.
     """
+    if TTS_MUTED:
+        return {"ok": True, "skipped": True, "reason": "muted (JARVIS_TTS_MUTE)"}
     gen = _generation
     clean = strip_for_tts(text)
     if not clean:
