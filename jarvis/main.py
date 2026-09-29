@@ -1349,7 +1349,7 @@ async def api_scheduler_set_enabled(job_id: int, body: dict[str, Any]) -> dict[s
     return scheduler.set_enabled(job_id, bool(body.get("enabled", True)))
 
 
-async def _hermes_jobs_call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+async def _hermes_gateway_call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Authenticated proxy to the Hermes gateway jobs (cron) API."""
     import aiohttp
 
@@ -1383,7 +1383,7 @@ async def _hermes_jobs_call(method: str, path: str, body: dict[str, Any] | None 
 @app.get("/api/hermes/jobs")
 async def api_hermes_jobs() -> dict[str, Any]:
     """List Hermes cron jobs (fresh-session scheduled automations)."""
-    return await _hermes_jobs_call("GET", "/api/jobs")
+    return await _hermes_gateway_call("GET", "/api/jobs")
 
 
 @app.post("/api/hermes/jobs/{job_id}/{action}")
@@ -1391,13 +1391,35 @@ async def api_hermes_job_action(job_id: str, action: str) -> dict[str, Any]:
     """Lifecycle action on a Hermes cron job: pause | resume | run."""
     if action not in ("pause", "resume", "run"):
         return {"ok": False, "error": "action must be pause | resume | run"}
-    return await _hermes_jobs_call("POST", f"/api/jobs/{job_id}/{action}")
+    return await _hermes_gateway_call("POST", f"/api/jobs/{job_id}/{action}")
 
 
 @app.delete("/api/hermes/jobs/{job_id}")
 async def api_hermes_job_delete(job_id: str) -> dict[str, Any]:
     """Delete a Hermes cron job."""
-    return await _hermes_jobs_call("DELETE", f"/api/jobs/{job_id}")
+    return await _hermes_gateway_call("DELETE", f"/api/jobs/{job_id}")
+
+
+@app.get("/api/skills")
+async def api_skills() -> dict[str, Any]:
+    """List Hermes' installed skills (the Skills panel backend)."""
+    return await _hermes_gateway_call("GET", "/v1/skills")
+
+
+@app.get("/api/hermes/sessions")
+async def api_hermes_sessions(limit: int = 50, offset: int = 0) -> dict[str, Any]:
+    """List durable Hermes conversation sessions (the History panel backend)."""
+    return await _hermes_gateway_call(
+        "GET", f"/api/sessions?limit={limit}&offset={offset}"
+    )
+
+
+@app.get("/api/hermes/sessions/{session_id}/messages")
+async def api_hermes_session_messages(session_id: str, limit: int = 300) -> dict[str, Any]:
+    """Read the stored transcript of one Hermes session."""
+    return await _hermes_gateway_call(
+        "GET", f"/api/sessions/{session_id}/messages?limit={limit}"
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
