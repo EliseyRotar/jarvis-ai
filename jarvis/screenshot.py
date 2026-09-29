@@ -47,5 +47,8 @@ async def capture_jpeg(max_width: int = 640, quality: int = 55) -> str | None:
     try:
         return await asyncio.to_thread(_grab_jpeg, max_width, quality)
     except Exception as exc:  # noqa: BLE001 — capture is best-effort decoration
+        # The grab failed after the slot was reserved — hand the slot back so
+        # one transient error doesn't eat the next allowed capture.
+        _last = 0.0
         log.debug("screenshot capture failed: %s", exc)
         return None
