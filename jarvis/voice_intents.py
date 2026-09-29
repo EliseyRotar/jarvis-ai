@@ -24,6 +24,14 @@ SendFn = Callable[[dict[str, Any]], Awaitable[None]]
 # intentionally specific so we never false-positive on normal chat.
 INTENT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(
+        r"\b(?:what|list|show)\s+(?:are\s+)?(?:my\s+)?(?:reminders?|scheduled\s+(?:jobs|prompts))\b",
+        re.IGNORECASE),
+     "list_reminders"),
+    (re.compile(
+        r"\b(?:quali|lista|l'elenco)\s+(?:dei\s+|miei\s+)*promemoria\b",
+        re.IGNORECASE),
+     "list_reminders"),
+    (re.compile(
         r"\b(create|add|new|register)\b.{0,12}\b(project|profile)\b"
         r"(?:\s+(?:called|named|for))?\s+(?P<name>[a-z0-9][a-z0-9_-]{0,31})\b",
         re.IGNORECASE),
@@ -156,6 +164,23 @@ async def handle_voice_intent(
                         "message": (f"Opening project wizard for '{name}'. "
                                     "Pick the working directory and continue.")})
         log.info("voice-intent create_project: name=%s", name)
+        return True
+
+    if intent == "list_reminders":
+        from .tools import scheduler
+
+        jobs = [j for j in scheduler.list_jobs()["jobs"] if j.get("enabled")]
+        if not jobs:
+            msg = "No reminders scheduled."
+        else:
+            parts = [
+                f"{j['name']} ({j['kind']} {j.get('next_run_iso') or j.get('spec', '')})"
+                for j in jobs[:8]
+            ]
+            msg = f"{len(jobs)} reminder{'s' if len(jobs) != 1 else ''}: " + "; ".join(parts)
+        if send:
+            await send({"type": "toast", "kind": "info", "message": msg})
+        log.info("voice-intent list_reminders: %d enabled", len(jobs))
         return True
 
     if intent in ("remind_me_in", "remind_me_at", "remind_me_every", "remind_me_daily"):
