@@ -58,7 +58,7 @@ class ProjectSpec:
     cwd: str
     soul_md: str
     api_key: str = ""           # if empty, auto-generated
-    model: str = "gemini-3.8-flash"
+    model: str = "gemini-3.6-flash"
     provider: str = "gemini"
     base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     ollama_api_key: str = ""    # if empty, inherited from default profile
