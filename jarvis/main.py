@@ -128,14 +128,19 @@ class Hub:
         self.clients: set[WebSocket] = set()
 
     async def broadcast(self, msg: dict[str, Any]) -> None:
-        dead: list[WebSocket] = []
-        for ws in list(self.clients):
-            try:
-                await ws.send_text(json.dumps(msg, ensure_ascii=False))
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
+        # Fan out concurrently: one stalled socket must not back-pressure
+        # every other client (or the turn itself).
+        data = json.dumps(msg, ensure_ascii=False)
+        targets = list(self.clients)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(ws.send_text(data) for ws in targets),
+            return_exceptions=True,
+        )
+        for ws, res in zip(targets, results):
+            if isinstance(res, Exception):
+                self.clients.discard(ws)
 
     def add(self, ws: WebSocket) -> None:
         self.clients.add(ws)
@@ -200,7 +205,13 @@ def _create_task(coro) -> asyncio.Task:
     """Create a task and keep a strong reference so GC can't cancel it."""
     task = asyncio.create_task(coro)
     _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+
+    def _done(t: asyncio.Task) -> None:
+        _tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            log.warning("background task failed: %s", t.exception())
+
+    task.add_done_callback(_done)
     return task
 
 
@@ -417,14 +428,20 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     _sentence_tasks: list[asyncio.Task] = []
     _speaking_started = False
     _saw_text = False
+    _saw_think = False
 
     async def on_event(event: dict[str, Any]) -> None:
-        nonlocal _tts_buf, _speaking_started, _saw_text
+        nonlocal _tts_buf, _speaking_started, _saw_text, _saw_think
         # task_update events (from the Hermes todo tracker) pass through
         # directly — the frontend renders them as the live task tracker.
         if event.get("type") == "task_update":
             await _emit(event, send)
             return
+        # The UI's think view keys off start/end brackets; Hermes only ever
+        # streams think_delta — synthesize the opening bracket once.
+        if event.get("type") == "think_delta" and not _saw_think:
+            _saw_think = True
+            await _emit({"type": "llm_event", "event": {"type": "think_start"}}, send)
         # Forward raw event to UI
         await _emit({"type": "llm_event", "event": event}, send)
 
@@ -445,7 +462,7 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
                 if not _speaking_started:
                     _speaking_started = True
                     await _emit({"type": "speaking", "state": "start"}, send)
-                _create_task(tts.speak(phrase, lang=detected_lang))
+                _sentence_tasks.append(_create_task(tts.speak(phrase, lang=detected_lang)))
 
         # Let task manager react
         snap = task_mgr.handle_event(event)
@@ -454,9 +471,10 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
             if snap.get("kind") == "task_plan":
                 goal = snap.get("plan", {}).get("goal", "")
                 phrase = f"Understood. Initiating task: {goal}" if goal else "Understood. Task initiated."
-                await _emit({"type": "speaking", "state": "start"}, send)
-                await tts.speak(phrase, lang=detected_lang)
-                await _emit({"type": "speaking", "state": "end"}, send)
+                if not _speaking_started:
+                    _speaking_started = True
+                    await _emit({"type": "speaking", "state": "start"}, send)
+                _sentence_tasks.append(_create_task(tts.speak(phrase, lang=detected_lang)))
             elif snap.get("kind") == "step":
                 plan = snap.get("plan", {})
                 step = plan.get("changed_step", {})
@@ -466,16 +484,18 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
                     n = step.get("n", "?")
                     label = step.get("label", "")
                     phrase = f"Step {n}: {label}." if label else f"Running step {n}."
-                    await _emit({"type": "speaking", "state": "start"}, send)
-                    await tts.speak(phrase, lang=detected_lang)
-                    await _emit({"type": "speaking", "state": "end"}, send)
+                    if not _speaking_started:
+                        _speaking_started = True
+                        await _emit({"type": "speaking", "state": "start"}, send)
+                    _sentence_tasks.append(_create_task(tts.speak(phrase, lang=detected_lang)))
                 elif status == "error":
                     n = step.get("n", "?")
                     reason = step.get("reason", "")
                     phrase = f"Step {n} failed. {reason}" if reason else f"Step {n} failed."
-                    await _emit({"type": "speaking", "state": "start"}, send)
-                    await tts.speak(phrase, lang=detected_lang)
-                    await _emit({"type": "speaking", "state": "end"}, send)
+                    if not _speaking_started:
+                        _speaking_started = True
+                        await _emit({"type": "speaking", "state": "start"}, send)
+                    _sentence_tasks.append(_create_task(tts.speak(phrase, lang=detected_lang)))
 
         # Sentence-streaming: queue each complete sentence for TTS as it arrives
         if event.get("type") == "response_delta":
@@ -506,6 +526,14 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
     try:
         result = await llm.stream_chat(msgs_snapshot, on_event, mode=_current_mode)
+    except asyncio.CancelledError:
+        # Barge-in / last-client disconnect: drop the just-appended user
+        # message so it doesn't linger as history with no assistant reply.
+        async with _lock:
+            if conversation and conversation[-1].get("role") == "user" \
+                    and conversation[-1].get("content") == user_message:
+                conversation.pop()
+        raise
     except Exception as exc:
         log.exception("LLM stream failed")
         await _emit({"type": "error", "message": f"LLM stream failed: {exc}"}, send)
@@ -525,11 +553,14 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
     final_text = (result.get("final_text") or "").strip()
     elapsed = round(time.time() - started, 2)
+    if _saw_think:
+        await _emit({"type": "llm_event", "event": {"type": "think_end"}}, send)
     # Hermes ends the SSE stream without an error event when the model failed
     # on every retry (e.g. free-tier 429 with the fallback chain exhausted) —
     # the turn then arrives here with no streamed text and no final text.
     # Surface that as an explicit error so the UI never sits on a blank turn.
-    if not final_text and not _saw_text:
+    # Early-error paths already emitted their own message (errored=True).
+    if not final_text and not _saw_text and not result.get("errored"):
         await _emit({
             "type": "error",
             "message": "Hermes returned no response this turn (likely API "
@@ -1481,6 +1512,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
             pass
     finally:
         hub.remove(ws)
+        # Last client disconnected mid-turn: cancel the orphaned turn (its
+        # CancelledError path pops the user message and stops the Hermes run)
+        # and cut the speech so we don't keep talking to an empty room.
+        if not hub.clients:
+            task = _current_turn_task
+            if task is not None and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+            await tts.cancel_speaking()
 
 
 # ──────────────────────────────────────────────────────────────────────────
