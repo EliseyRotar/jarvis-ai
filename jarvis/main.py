@@ -113,6 +113,18 @@ _ONLINE_CHECK_RE = re.compile(
     r"|status\s+check",
     re.IGNORECASE,
 )
+
+# "what's on my screen" class of questions — matched turns get an inline
+# screenshot attached to the Hermes request (multimodal chat/stream path).
+_SCREEN_RE = re.compile(
+    r"\b(?:screenshot|screen|monitor)\b"
+    r"|(?:what(?:'s|\s+is)\s+on\s+(?:my|the)\s+(?:screen|monitor|display))"
+    r"|look\s+at\s+(?:my|the)\s+screen"
+    r"|what\s+do\s+you\s+see\b"
+    r"|на\s+экране|экране|скриншот"
+    r"|schermo|sullo\s+schermo",
+    re.IGNORECASE,
+)
 WEBUI_URL = "http://127.0.0.1:8765"
 
 
@@ -343,7 +355,17 @@ async def _debounced_save_history() -> None:
 # ──────────────────────────────────────────────────────────────────────────
 
 
-async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
+async def _do_steer(text: str) -> None:
+    """Inject guidance into the live Hermes run and report the outcome."""
+    ok, note = await llm.steer_run(text)
+    if ok:
+        await hub.broadcast({"type": "toast", "kind": "ok", "message": "steered into running turn"})
+    else:
+        await hub.broadcast({"type": "toast", "kind": "err", "message": f"steer failed: {note}"})
+
+
+async def handle_user_turn(text: str, *, voice: bool, send: Any,
+                           attach_screen: bool = False) -> None:
     """Run a full LLM + tool turn, streaming events to `send` (a callable
     awaiting a dict) and broadcasting to all other clients."""
     global _current_lang, _current_turn_task
@@ -524,8 +546,20 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     await _emit({"type": "speaking", "state": "start"}, send)
     _sentence_tasks.append(_create_task(tts.speak(_start_ack_phrase(), lang=detected_lang)))
 
+    # Screen questions: attach a live screenshot so the model actually sees
+    # the desktop instead of guessing. Rate-limited + best-effort.
+    image_b64 = None
+    if attach_screen or _SCREEN_RE.search(text):
+        try:
+            from . import screenshot as _shot
+
+            image_b64 = await _shot.capture_jpeg(max_width=1280, quality=70)
+        except Exception as exc:
+            log.warning("screen attach failed: %s", exc)
+
     try:
-        result = await llm.stream_chat(msgs_snapshot, on_event, mode=_current_mode)
+        result = await llm.stream_chat(msgs_snapshot, on_event,
+                                       mode=_current_mode, image_b64=image_b64)
     except asyncio.CancelledError:
         # Barge-in / last-client disconnect: drop the just-appended user
         # message so it doesn't linger as history with no assistant reply.
@@ -1275,6 +1309,98 @@ async def api_history() -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Scheduler (reminders) + Hermes cron jobs — Jobs panel backend
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/scheduler")
+async def api_scheduler_list() -> dict[str, Any]:
+    """List jarvis' own scheduled prompts (~/.jarvis/scheduler.db)."""
+    from .tools import scheduler
+
+    return scheduler.list_jobs()
+
+
+@app.post("/api/scheduler")
+async def api_scheduler_add(body: dict[str, Any]) -> dict[str, Any]:
+    """Create a scheduled prompt. kind = once | interval | daily."""
+    from .tools import scheduler
+
+    return scheduler.add(
+        str(body.get("name") or ""),
+        str(body.get("prompt") or ""),
+        str(body.get("kind") or ""),
+        str(body.get("spec") or ""),
+    )
+
+
+@app.delete("/api/scheduler/{job_id}")
+async def api_scheduler_delete(job_id: int) -> dict[str, Any]:
+    """Remove a scheduled prompt."""
+    from .tools import scheduler
+
+    return scheduler.cancel(job_id)
+
+
+@app.patch("/api/scheduler/{job_id}")
+async def api_scheduler_set_enabled(job_id: int, body: dict[str, Any]) -> dict[str, Any]:
+    """Enable/disable a scheduled prompt without deleting it."""
+    from .tools import scheduler
+
+    return scheduler.set_enabled(job_id, bool(body.get("enabled", True)))
+
+
+async def _hermes_jobs_call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Authenticated proxy to the Hermes gateway jobs (cron) API."""
+    import aiohttp
+
+    headers = {
+        "Authorization": f"Bearer {llm._KEYS.get('default', '')}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(
+                method,
+                f"{llm.HERMES_URL}{path}",
+                json=body,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                text = await resp.text()
+                try:
+                    data: Any = json.loads(text) if text else {}
+                except json.JSONDecodeError:
+                    data = {"raw": text[:500]}
+                if isinstance(data, dict):
+                    data.setdefault("ok", resp.status < 400)
+                    if resp.status >= 400:
+                        data.setdefault("error", f"HTTP {resp.status}")
+                return data
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/hermes/jobs")
+async def api_hermes_jobs() -> dict[str, Any]:
+    """List Hermes cron jobs (fresh-session scheduled automations)."""
+    return await _hermes_jobs_call("GET", "/api/jobs")
+
+
+@app.post("/api/hermes/jobs/{job_id}/{action}")
+async def api_hermes_job_action(job_id: str, action: str) -> dict[str, Any]:
+    """Lifecycle action on a Hermes cron job: pause | resume | run."""
+    if action not in ("pause", "resume", "run"):
+        return {"ok": False, "error": "action must be pause | resume | run"}
+    return await _hermes_jobs_call("POST", f"/api/jobs/{job_id}/{action}")
+
+
+@app.delete("/api/hermes/jobs/{job_id}")
+async def api_hermes_job_delete(job_id: str) -> dict[str, Any]:
+    """Delete a Hermes cron job."""
+    return await _hermes_jobs_call("DELETE", f"/api/jobs/{job_id}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Home Assistant API
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -1455,9 +1581,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
             if mtype == "user_text":
                 text = msg.get("text", "")
                 voice = bool(msg.get("voice"))
+                attach = bool(msg.get("attach_screen"))
                 # send takes dicts (voice-intent toasts); hub.broadcast reaches
                 # this client too because the socket is registered with the hub.
-                _create_task(handle_user_turn(text, voice=voice, send=hub.broadcast))
+                _create_task(handle_user_turn(text, voice=voice,
+                                              send=hub.broadcast, attach_screen=attach))
+            elif mtype == "user_steer":
+                # Mid-run guidance: injected into the live Hermes run at its
+                # next tool boundary — no cancel, no lost tool progress.
+                text = (msg.get("text") or "").strip()
+                if text:
+                    _create_task(_do_steer(text))
             elif mtype == "user_audio_pcm":
                 import base64
                 b64 = msg.get("data", "")
@@ -1774,6 +1908,9 @@ async def _on_startup() -> None:
         log.info("scheduler loop started")
     except Exception as exc:
         log.warning("scheduler failed to start: %s", exc)
+
+    # Live model inventory from the gateway (falls back to the static list).
+    _create_task(llm.refresh_models())
 
     # Telegram channel: answer messages from your phone as if typed in the HUD.
     try:
