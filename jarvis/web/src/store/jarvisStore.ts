@@ -82,7 +82,8 @@ interface JarvisState {
   toasts: { id: string; message: string; kind: string }[]
 
   send: (obj: Record<string, unknown>) => void
-  sendText: (text: string, voice?: boolean) => void
+  sendText: (text: string, voice?: boolean, attachScreen?: boolean) => void
+  steer: (text: string) => void
   sendAudioPcm: (b64: string) => void
   stop: () => void
   reset: () => void
@@ -132,9 +133,12 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   send: (obj) => {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj))
   },
-  sendText: (text, voice = false) => {
-    get().send({ type: 'user_text', text, voice })
+  sendText: (text, voice = false, attachScreen = false) => {
+    const payload: Record<string, unknown> = { type: 'user_text', text, voice }
+    if (attachScreen) payload.attach_screen = true
+    get().send(payload)
   },
+  steer: (text) => get().send({ type: 'user_steer', text }),
   sendAudioPcm: (b64) => {
     get().send({ type: 'user_audio_pcm', data: b64 })
   },
