@@ -17,6 +17,7 @@ dependencies = [
     "aiohttp>=3.9",
     "claude-agent-sdk>=0.1.0",
     "faster-whisper>=1.0",
+    "pillow>=10.0",
     "numpy>=1.26,<2; python_version < '3.13'",
     "numpy>=2; python_version >= '3.13'",
     "edge-tts>=6.1.9",
