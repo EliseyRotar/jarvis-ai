@@ -416,9 +416,10 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
     _tts_buf = ""
     _sentence_tasks: list[asyncio.Task] = []
     _speaking_started = False
+    _saw_text = False
 
     async def on_event(event: dict[str, Any]) -> None:
-        nonlocal _tts_buf, _speaking_started
+        nonlocal _tts_buf, _speaking_started, _saw_text
         # task_update events (from the Hermes todo tracker) pass through
         # directly — the frontend renders them as the live task tracker.
         if event.get("type") == "task_update":
@@ -478,6 +479,7 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
         # Sentence-streaming: queue each complete sentence for TTS as it arrives
         if event.get("type") == "response_delta":
+            _saw_text = True
             _tts_buf += event.get("text", "")
             while True:
                 sentence, rest = _extract_first_sentence(_tts_buf)
@@ -523,6 +525,16 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
 
     final_text = (result.get("final_text") or "").strip()
     elapsed = round(time.time() - started, 2)
+    # Hermes ends the SSE stream without an error event when the model failed
+    # on every retry (e.g. free-tier 429 with the fallback chain exhausted) —
+    # the turn then arrives here with no streamed text and no final text.
+    # Surface that as an explicit error so the UI never sits on a blank turn.
+    if not final_text and not _saw_text:
+        await _emit({
+            "type": "error",
+            "message": "Hermes returned no response this turn (likely API "
+                       "quota exhausted). Try again in a minute.",
+        }, send)
     await _emit({
         "type": "turn_end",
         "final_text": final_text,
