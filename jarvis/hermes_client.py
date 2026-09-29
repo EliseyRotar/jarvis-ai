@@ -199,17 +199,49 @@ def get_models() -> list[str]:
 
 
 async def set_model(model_id: str) -> bool:
-    """Switch the active model (sent per-request to Hermes).
+    """Switch the active model without dropping conversation context.
 
-    The sessions API pins the model at session creation, so switching models
-    resets the stable session ids — the next turn creates fresh sessions with
-    the new model.
+    Prefers the session model-lock API (POST /api/sessions/{id}/model), which
+    repins every live session to the new model in place — context survives.
+    Falls back to resetting session ids (fresh sessions, context lost) when
+    the lock call fails or Hermes is too old to expose the route.
     """
     global _active_model
+    await refresh_models()
     if model_id not in AVAILABLE_MODELS:
         return False
-    if model_id != _active_model:
-        _active_model = model_id
+    if model_id == _active_model:
+        return True
+    live_sessions = {prof: sid for prof, sid in _SESSION_IDS.items() if sid}
+    _active_model = model_id
+    if not live_sessions:
+        # Nothing minted yet — the next turn creates sessions with the new model.
+        log.info("Hermes model switched to %s (no live sessions)", model_id)
+        return True
+    locked = 0
+    try:
+        async with aiohttp.ClientSession() as session:
+            for prof, sid in live_sessions.items():
+                base = _profile_url(prof)
+                key = _KEYS.get(prof) or _KEYS.get("default")
+                try:
+                    async with session.post(
+                        f"{base}/api/sessions/{sid}/model",
+                        json={"model": model_id},
+                        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status < 400:
+                            locked += 1
+                        else:
+                            log.warning("model lock rejected for %s: HTTP %s", prof, resp.status)
+                except Exception as exc:
+                    log.warning("model lock failed for %s: %s", prof, exc)
+    except Exception as exc:
+        log.warning("model lock pass errored: %s", exc)
+    if locked == len(live_sessions):
+        log.info("Hermes model switched to %s (session model lock, context preserved)", model_id)
+    else:
         reset_session()
         log.info("Hermes model switched to %s (sessions reset)", model_id)
     return True
@@ -219,6 +251,83 @@ def reset_session() -> None:
     """Forget stable session ids so the next run starts a fresh Hermes session."""
     for key in _SESSION_IDS:
         _SESSION_IDS[key] = None
+
+
+_models_loaded = False
+
+
+async def refresh_models() -> bool:
+    """Refresh AVAILABLE_MODELS from the gateway's model inventory (once).
+
+    Falls back to the static free-tier catalog when the endpoint is missing
+    or unauthenticated, so model switching never breaks offline.
+    """
+    global _models_loaded
+    if _models_loaded:
+        return True
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{HERMES_URL}/api/model/options",
+                headers={"Authorization": f"Bearer {_KEYS.get('default', '')}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status >= 400:
+                    log.warning("model inventory unavailable (HTTP %s)", resp.status)
+                    return False
+                data = await resp.json()
+    except Exception as exc:
+        log.warning("model inventory fetch failed: %s", exc)
+        return False
+    ids: list[str] = []
+    for provider in data.get("providers", []) or []:
+        if not provider.get("authenticated"):
+            continue
+        for entry in provider.get("models", []) or []:
+            mid = entry.get("id") or entry.get("name") if isinstance(entry, dict) else str(entry)
+            if mid and mid not in ids:
+                ids.append(mid)
+    gemini = [m for m in ids if "gemini" in m]
+    if gemini:
+        ids = gemini
+    if not ids:
+        return False
+    if _active_model not in ids:
+        ids.insert(0, _active_model)
+    AVAILABLE_MODELS[:] = ids
+    _models_loaded = True
+    log.info("model inventory loaded: %d models", len(ids))
+    return True
+
+
+async def steer_run(text: str) -> tuple[bool, str]:
+    """Inject mid-run guidance into the active Hermes run (no new turn).
+
+    The text reaches the agent after its next tool boundary, so it can
+    course-correct without discarding the current tool-calling loop.
+    """
+    async with _active_run_lock:
+        run_id = _active_run_id
+        profile = _active_run_profile
+    if not run_id:
+        return False, "no active run to steer"
+    base = _profile_url(profile or "default")
+    key = _KEYS.get(profile or "default") or _KEYS.get("default")
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base}/v1/runs/{run_id}/steer",
+                json={"input": text},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status < 400:
+                    return True, "accepted"
+                body_text = (await resp.text())[:300]
+                return False, f"rejected ({resp.status}): {body_text}"
+    except Exception as exc:
+        return False, f"steer failed: {exc}"
 
 
 async def stop_run() -> bool:
@@ -411,12 +520,15 @@ async def stream_chat(
     on_event: EventHandler,
     *,
     mode: str = "default",
+    image_b64: str | None = None,
 ) -> dict[str, Any]:
     """Run one agent turn through Hermes, streaming events to ``on_event``.
 
     ``messages`` is the local conversation (system message first, if any).
     The last user message becomes the run input; everything before it is
-    sent as conversation_history so Hermes has full context.
+    sent as conversation_history so Hermes has full context. When
+    ``image_b64`` is set, the input is sent as text + inline JPEG parts
+    (the multimodal chat/stream path) so the model can see the screen.
 
     Returns the same shape as the old llm.stream_chat:
         {"messages": [...], "final_text": "..."}
@@ -485,6 +597,14 @@ async def stream_chat(
                 "message": user_message,
                 "model": _active_model,
             }
+            if image_b64:
+                body["message"] = [
+                    {"type": "text", "text": user_message},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}", "detail": "high"},
+                    },
+                ]
             if history:
                 body["conversation_history"] = history[-40:]
             if system_parts:
