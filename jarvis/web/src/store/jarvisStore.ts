@@ -8,6 +8,8 @@ export type ToolCall = {
   elapsedMs?: number
   status: 'running' | 'done' | 'error'
   startedAt: number
+  /** base64 JPEG of the screen when the action started (from {type:'screenshot'}) */
+  screenshot?: string
 }
 
 export type TranscriptTurn = {
@@ -68,6 +70,8 @@ interface JarvisState {
   responseState: 'idle' | 'streaming' | 'ready' | 'error'
   transcript: TranscriptTurn[]
   toolCalls: ToolCall[]
+  /** rolling session log of tool actions for the right rail (capped, survives turn_start) */
+  activityLog: ToolCall[]
   task: TaskPlan | null
   taskHistory: TaskPlan[]
   lastTurnMeta: TurnMeta | null
@@ -112,6 +116,7 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   responseState: 'idle',
   transcript: [],
   toolCalls: [],
+  activityLog: [],
   task: null,
   taskHistory: [],
   lastTurnMeta: null,
@@ -199,22 +204,29 @@ function handleLlmEvent(ev: any) {
         responseLive: s.responseLive + ev.text,
       }))
       break
-    case 'tool_call':
+    case 'tool_call': {
+      const entry: ToolCall = {
+        id: ev.id,
+        name: ev.name,
+        args: ev.args,
+        status: 'running',
+        startedAt: Date.now(),
+      }
       set((s) => ({
-        toolCalls: [
-          ...s.toolCalls,
-          { id: ev.id, name: ev.name, args: ev.args, status: 'running', startedAt: Date.now() },
-        ],
+        toolCalls: [...s.toolCalls, entry],
+        activityLog: [...s.activityLog, entry].slice(-24),
       }))
       break
+    }
     case 'tool_result': {
       const ok = ev.result && ev.result.ok !== false && !ev.result.error
+      const done = (tc: ToolCall): ToolCall =>
+        tc.id === ev.id
+          ? { ...tc, result: ev.result, elapsedMs: ev.elapsed_ms || 0, status: ok ? 'done' : 'error' }
+          : tc
       set((s) => ({
-        toolCalls: s.toolCalls.map((tc) =>
-          tc.id === ev.id
-            ? { ...tc, result: ev.result, elapsedMs: ev.elapsed_ms || 0, status: ok ? 'done' : 'error' }
-            : tc,
-        ),
+        toolCalls: s.toolCalls.map(done),
+        activityLog: s.activityLog.map(done),
       }))
       break
     }
@@ -303,6 +315,9 @@ function handleMessage(msg: any) {
         responseState: 'idle',
         turnActive: true,
         reactor: 'THINK',
+        // floating action cards show the current turn only; the right-rail
+        // activityLog keeps the session history (late screenshots still land there)
+        toolCalls: [],
         responseTurns: s.responseLive.trim() || s.responseTurns.length
           ? [...s.responseTurns]
           : s.responseTurns,
@@ -346,6 +361,12 @@ function handleMessage(msg: any) {
     case 'llm_event':
       handleLlmEvent(msg.event)
       break
+    case 'screenshot':
+      set((s) => ({
+        toolCalls: s.toolCalls.map((tc) => (tc.id === msg.for ? { ...tc, screenshot: msg.data } : tc)),
+        activityLog: s.activityLog.map((tc) => (tc.id === msg.for ? { ...tc, screenshot: msg.data } : tc)),
+      }))
+      break
     case 'task_update':
       if (msg.kind === 'task_plan') set({ task: msg.plan })
       else if (msg.kind === 'step') set({ task: msg.plan })
@@ -365,6 +386,7 @@ function handleMessage(msg: any) {
         responseState: 'idle',
         transcript: [],
         toolCalls: [],
+        activityLog: [],
         task: null,
       })
       break
