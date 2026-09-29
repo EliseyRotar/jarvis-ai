@@ -284,7 +284,7 @@ async def refresh_models() -> bool:
         if not provider.get("authenticated"):
             continue
         for entry in provider.get("models", []) or []:
-            mid = entry.get("id") or entry.get("name") if isinstance(entry, dict) else str(entry)
+            mid = (entry.get("id") or entry.get("name")) if isinstance(entry, dict) else str(entry)
             if mid and mid not in ids:
                 ids.append(mid)
     gemini = [m for m in ids if "gemini" in m]
