@@ -48,15 +48,40 @@ INTENT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.IGNORECASE),
      "remind_me_at"),
     (re.compile(
+        r"\bremind\s+me\s+every\s+(?P<n>\d{1,3})\s*(?P<unit>minutes?|mins?|hours?|hrs?)"
+        r"\s+(?:to\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_every"),
+    (re.compile(
+        r"\bremind\s+me\s+every\s+(?:day\s+)?(?:at\s+)?(?P<time>\d{1,2}:\d{2})"
+        r"\s+(?:to\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_daily"),
+    (re.compile(
         r"\bricordami\s+tra\s+(?P<n>\d{1,3})\s*(?P<unit>minuti?|ore?)"
         r"\s+(?:di\s+)?(?P<what>[^.;!?]{3,140})",
         re.IGNORECASE),
      "remind_me_in"),
     (re.compile(
+        r"\bricordami\s+ogni\s+(?P<n>\d{1,3})\s*(?P<unit>minuti?|ore?)"
+        r"\s+(?:di\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_every"),
+    (re.compile(
+        r"\bricordami\s+(?:ogni\s+giorno|tutti\s+i\s+giorni)\s+(?:alle\s+|in\s+)?"
+        r"(?P<time>\d{1,2}:\d{2})\s*(?:di\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_daily"),
+    (re.compile(
         r"\b(?:напомни|напомнить)\s+(?:мне\s+)?через\s+(?P<n>\d{1,3})\s*"
         r"(?P<unit>минут|мин|часа|часов|час)\s*(?:мне\s+)?(?P<what>[^.;!?]{3,140})",
         re.IGNORECASE),
      "remind_me_in"),
+    (re.compile(
+        r"\b(?:напомни|напомнить)\s+(?:мне\s+)?каждый\s+день\s+(?:в\s+)?"
+        r"(?P<time>\d{1,2}:\d{2})\s*(?:мне\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_daily"),
 ]
 
 
@@ -133,7 +158,7 @@ async def handle_voice_intent(
         log.info("voice-intent create_project: name=%s", name)
         return True
 
-    if intent in ("remind_me_in", "remind_me_at"):
+    if intent in ("remind_me_in", "remind_me_at", "remind_me_every", "remind_me_daily"):
         from datetime import datetime, timedelta
 
         from .tools import scheduler
@@ -141,31 +166,55 @@ async def handle_voice_intent(
         what = (groups.get("what") or "").strip()
         if not what:
             return False
-        if intent == "remind_me_in":
+        unit = (groups.get("unit") or "minutes").lower()
+        is_hours = unit.startswith(("hour", "hr", "ore", "ora", "час"))
+
+        try:
             n = int(groups.get("n") or 0)
-            unit = (groups.get("unit") or "minutes").lower()
-            delta = timedelta(hours=n) if unit.startswith(("hour", "hr", "ore", "ora", "час")) \
-                else timedelta(minutes=n)
-            if n <= 0:
-                return False
-            fire_at = datetime.now() + delta
-        else:  # remind_me_at HH:MM — next occurrence of that clock time
+        except ValueError:
+            return False
+        if intent in ("remind_me_in", "remind_me_every") and n <= 0:
+            return False
+
+        time_str = groups.get("time") or ""
+        hh = mm = None
+        if time_str:
             try:
-                hh, mm = (int(x) for x in (groups.get("time") or "").split(":"))
+                hh, mm = (int(x) for x in time_str.split(":"))
                 if not (0 <= hh <= 23 and 0 <= mm <= 59):
                     raise ValueError
             except ValueError:
                 return False
+        if intent in ("remind_me_at", "remind_me_daily") and hh is None:
+            return False
+
+        fire_at: datetime | None = None
+        if intent == "remind_me_in":
+            delta = timedelta(hours=n) if is_hours else timedelta(minutes=n)
+            fire_at = datetime.now() + delta
+            kind, spec = "once", fire_at.isoformat(timespec="seconds")
+            desc = f"Reminder set for {fire_at.strftime('%H:%M')}"
+        elif intent == "remind_me_at":
             fire_at = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
             if fire_at <= datetime.now():
                 fire_at += timedelta(days=1)
+            kind, spec = "once", fire_at.isoformat(timespec="seconds")
+            desc = f"Reminder set for {fire_at.strftime('%H:%M')}"
+        elif intent == "remind_me_every":
+            seconds = n * (3600 if is_hours else 60)
+            kind, spec = "interval", str(seconds)
+            desc = f"Reminder every {n} {'hours' if is_hours else 'minutes'}"
+        else:  # remind_me_daily
+            kind, spec = "daily", f"{hh:02d}:{mm:02d}"
+            desc = f"Reminder every day at {hh:02d}:{mm:02d}"
 
         # SPEAK: prefix -> the scheduler says it aloud at fire time, no LLM.
+        name = f"reminder-{kind}-{(fire_at.strftime('%H%M') if fire_at else spec)}"
         result = scheduler.add(
-            name=f"reminder-{fire_at.strftime('%H%M')}",
+            name=name,
             prompt=f"SPEAK: Reminder: {what}",
-            kind="once",
-            spec=fire_at.isoformat(timespec="seconds"),
+            kind=kind,
+            spec=spec,
         )
         if not result.get("ok"):
             if send:
@@ -174,8 +223,9 @@ async def handle_voice_intent(
             return True
         if send:
             await send({"type": "toast", "kind": "ok",
-                        "message": f"Reminder set for {fire_at.strftime('%H:%M')}: {what[:60]}"})
-        log.info("voice-intent remind: fire_at=%s what=%r", fire_at.isoformat(), what)
+                        "message": f"{desc}: {what[:60]}"})
+        log.info("voice-intent remind: intent=%s kind=%s spec=%s what=%r",
+                 intent, kind, spec, what)
         return True
 
     return False
