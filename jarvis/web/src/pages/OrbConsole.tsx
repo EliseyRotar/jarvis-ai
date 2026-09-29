@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   Mic, Square, Send, Cpu, MapPin, FolderGit2, Cloud,
   Activity, Clock, Radio, Plus, Minus,
-  Terminal, Wrench, FileText, Pencil, Globe, Search, ListTodo,
+  Terminal, Wrench, FileText, Pencil, Globe, Search, ListTodo, Camera,
   type LucideIcon,
 } from 'lucide-react'
 import { useJarvisStore, modelLabel, type ToolCall } from '@/store/jarvisStore'
@@ -409,6 +409,7 @@ export function OrbConsole() {
   const listening = useJarvisStore((s) => s.listening)
   const turnActive = useJarvisStore((s) => s.turnActive)
   const sendText = useJarvisStore((s) => s.sendText)
+  const steer = useJarvisStore((s) => s.steer)
   const stop = useJarvisStore((s) => s.stop)
   const task = useJarvisStore((s) => s.task)
   const toolCalls = useJarvisStore((s) => s.toolCalls)
@@ -416,6 +417,7 @@ export function OrbConsole() {
   const { recording, start, stop: micStop } = useMic()
   const [text, setText] = useState('')
   const [showInput, setShowInput] = useState(false)
+  const [attachScreen, setAttachScreen] = useState(false)
   const [orbBrightness, setOrbBrightness] = useState(0.45)  // 30% lower than the 0.65 default
 
   const thinking = turnActive && !speaking
@@ -428,13 +430,21 @@ export function OrbConsole() {
   const submit = () => {
     const t = text.trim()
     if (!t) return
-    sendText(t, false)
+    if (turnActive) {
+      // Mid-run: steer the live turn instead of cancelling it (steer lands at
+      // the model's next tool boundary — no lost tool progress).
+      steer(t)
+    } else {
+      sendText(t, false, attachScreen)
+      setAttachScreen(false)
+    }
     setText('')
   }
 
   const panels: RadialPanel[] = [
     { id: 'projects', label: 'projects', icon: 'projects' },
     { id: 'tasks', label: 'tasks', icon: 'tasks' },
+    { id: 'jobs', label: 'jobs', icon: 'jobs' },
     { id: 'subagents', label: 'subagents', icon: 'brain' },
     { id: 'logs', label: 'logs', icon: 'activity' },
     { id: 'settings', label: 'settings', icon: 'settings' },
@@ -552,9 +562,24 @@ export function OrbConsole() {
                   setShowInput(false)
                 }
               }}
-              placeholder="type a message…"
+              placeholder={turnActive ? 'steer the running turn…' : 'type a message…'}
               className="flex-1 rounded-full border border-[var(--line-bright)] bg-black/50 px-4 py-2 font-mono text-[13px] text-[var(--text)] outline-none backdrop-blur transition focus:border-[var(--blue)] focus:shadow-[0_0_14px_var(--blue-glow)]"
             />
+            {!turnActive && (
+              <button
+                type="button"
+                onClick={() => setAttachScreen((v) => !v)}
+                title="Attach a screenshot to this message"
+                className={cn(
+                  'rounded-full border p-2 transition',
+                  attachScreen
+                    ? 'border-[var(--amber)] bg-[rgba(255,180,0,0.12)] text-[var(--amber)] shadow-[0_0_12px_var(--amber-glow)]'
+                    : 'border-[var(--line-bright)] text-[var(--text-faint)] hover:border-[var(--blue)] hover:text-[var(--blue)]',
+                )}
+              >
+                <Camera size={15} />
+              </button>
+            )}
             <button
               type="button"
               onClick={submit}
