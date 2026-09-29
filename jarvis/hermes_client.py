@@ -54,7 +54,7 @@ AVAILABLE_MODELS = [
     "gemini-flash-lite-latest",
     "gemini-3.1-flash-lite",
 ]
-DEFAULT_MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.8-flash")
+DEFAULT_MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.6-flash")
 
 # Back-compat aliases for main.py's old llm.py references.
 DEFAULT_OR_MODEL = DEFAULT_MODEL
