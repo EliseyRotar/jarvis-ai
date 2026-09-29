@@ -65,6 +65,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from . import hermes_client as llm
 from . import tts
 from . import context_manager as ctx_mgr
+from . import screenshot
 from .stt import get_stt
 from .task_manager import TaskManager
 from .tools import hypr as hypr_tool
@@ -426,6 +427,11 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any) -> None:
         # Forward raw event to UI
         await _emit({"type": "llm_event", "event": event}, send)
 
+        # Activity UI: pair every tool action with a screen capture so the
+        # floating action cards / right rail can show what Cosmo was doing.
+        if event.get("type") == "tool_call":
+            _create_task(_emit_screenshot(event, send))
+
         # Per-action voice confirmation for state-changing tools (sent, saved,
         # deleted, toggled, …). Reads are not announced.
         if event.get("type") == "tool_result":
@@ -556,6 +562,20 @@ async def _emit(msg: dict[str, Any], send: Any) -> None:
         await send(msg)
     else:
         await hub.broadcast(msg)
+
+
+async def _emit_screenshot(event: dict[str, Any], send: Any) -> None:
+    """Push a screen capture tagged with the originating tool_call id.
+
+    Fire-and-forget from the event loop (via _create_task): a 100-300ms
+    ImageGrab must never stall the SSE stream that is forwarding tokens.
+    """
+    data = await screenshot.capture_jpeg()
+    if data:
+        await _emit(
+            {"type": "screenshot", "for": event.get("id"), "tool": event.get("name"), "data": data},
+            send,
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -948,6 +968,13 @@ async def api_project_context(cwd: str = "") -> dict[str, Any]:
     if last:
         ctx["git_last_commit"] = last
     return ctx
+
+
+@app.get("/api/screenshot")
+async def api_screenshot() -> dict[str, Any]:
+    """Current screen as base64 JPEG (activity rail live view; 1s rate cap)."""
+    data = await screenshot.capture_jpeg()
+    return {"ok": data is not None, "data": data}
 
 
 @app.get("/api/logs")
