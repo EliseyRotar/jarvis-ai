@@ -33,6 +33,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -43,28 +44,17 @@ log = logging.getLogger("jarvis.hermes")
 
 HERMES_URL = os.environ.get("JARVIS_HERMES_URL", "http://127.0.0.1:8642").rstrip("/")
 
-# Ollama Cloud catalog (fetched from https://ollama.com/v1/models at setup time).
+# Google AI Studio (Gemini) free-tier catalog, verified via /v1beta/models.
 AVAILABLE_MODELS = [
-    "gpt-oss:120b",
-    "qwen3.5:397b",
-    "kimi-k3",
-    "glm-5.2",
-    "glm-5.1",
-    "kimi-k2.7-code",
-    "kimi-k2.6",
-    "minimax-m3",
-    "minimax-m2.7",
-    "nemotron-3-ultra",
-    "nemotron-3-super",
-    "nemotron-3-nano:30b",
-    "mistral-large-3:675b",
-    "gemma4:31b",
-    "deepseek-v4-pro:preview",
-    "deepseek-v4-flash:preview",
-    "deepseek-v4-flash:0731",
-    "gpt-oss:20b",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
 ]
-DEFAULT_MODEL = os.environ.get("JARVIS_MODEL", "gpt-oss:20b")
+DEFAULT_MODEL = os.environ.get("JARVIS_MODEL", "gemini-3.8-flash")
 
 # Back-compat aliases for main.py's old llm.py references.
 DEFAULT_OR_MODEL = DEFAULT_MODEL
@@ -154,15 +144,18 @@ _KEYS = _load_keys()
 # Stable session ids per profile so Hermes memory/session tracking persists
 # across voice-server restarts. reset_session() clears them. Any additional
 # profile directory on disk gets a stable jarvis-orb-<name> session id here.
-_SESSION_IDS: dict[str, str | None] = {"default": "jarvis-orb"}
+# Values start as None: ids are minted lazily on the first turn and include a
+# model slug, because Hermes pins the model at session creation (a reused id
+# keeps its old model forever -- 404 when the provider/model changed).
+_SESSION_IDS: dict[str, str | None] = {"default": None}
 home = _hermes_home()
 profiles_dir = home / "profiles"
 if profiles_dir.is_dir():
     for entry in sorted(profiles_dir.iterdir()):
         if entry.is_dir() and entry.name not in _SESSION_IDS:
-            _SESSION_IDS[entry.name] = f"jarvis-orb-{entry.name}"
-_SESSION_IDS.setdefault("wwf", "jarvis-orb-wwf")
-_SESSION_IDS.setdefault("eli6", "jarvis-orb-eli6")
+            _SESSION_IDS[entry.name] = None
+_SESSION_IDS.setdefault("wwf", None)
+_SESSION_IDS.setdefault("eli6", None)
 
 _active_run_id: str | None = None
 _active_run_profile: str | None = None
@@ -482,7 +475,10 @@ async def stream_chat(
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            session_id = _SESSION_IDS.get(profile) or f"jarvis-orb-{profile}"
+            # Model-aware id: after a provider/model switch the old id would
+            # 409-reuse a session pinned to the previous model (404 downstream).
+            model_slug = re.sub(r"[^a-z0-9]+", "-", _active_model.lower()).strip("-")
+            session_id = _SESSION_IDS.get(profile) or f"jarvis-orb-{profile}-{model_slug}"
             _SESSION_IDS[profile] = session_id
             await _ensure_session(session, base, key, session_id)
 
