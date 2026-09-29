@@ -1349,6 +1349,13 @@ async def api_scheduler_set_enabled(job_id: int, body: dict[str, Any]) -> dict[s
     return scheduler.set_enabled(job_id, bool(body.get("enabled", True)))
 
 
+def _safe_gateway_id(value: str) -> bool:
+    """Reject ids that could smuggle extra path segments into gateway URLs."""
+    return bool(value) and len(value) <= 128 and bool(
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value)
+    )
+
+
 async def _hermes_gateway_call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Authenticated proxy to the Hermes gateway jobs (cron) API."""
     import aiohttp
@@ -1391,12 +1398,16 @@ async def api_hermes_job_action(job_id: str, action: str) -> dict[str, Any]:
     """Lifecycle action on a Hermes cron job: pause | resume | run."""
     if action not in ("pause", "resume", "run"):
         return {"ok": False, "error": "action must be pause | resume | run"}
+    if not _safe_gateway_id(job_id):
+        return {"ok": False, "error": "invalid job id"}
     return await _hermes_gateway_call("POST", f"/api/jobs/{job_id}/{action}")
 
 
 @app.delete("/api/hermes/jobs/{job_id}")
 async def api_hermes_job_delete(job_id: str) -> dict[str, Any]:
     """Delete a Hermes cron job."""
+    if not _safe_gateway_id(job_id):
+        return {"ok": False, "error": "invalid job id"}
     return await _hermes_gateway_call("DELETE", f"/api/jobs/{job_id}")
 
 
@@ -1417,6 +1428,8 @@ async def api_hermes_sessions(limit: int = 50, offset: int = 0) -> dict[str, Any
 @app.get("/api/hermes/sessions/{session_id}/messages")
 async def api_hermes_session_messages(session_id: str, limit: int = 300) -> dict[str, Any]:
     """Read the stored transcript of one Hermes session."""
+    if not _safe_gateway_id(session_id):
+        return {"ok": False, "error": "invalid session id"}
     return await _hermes_gateway_call(
         "GET", f"/api/sessions/{session_id}/messages?limit={limit}"
     )
