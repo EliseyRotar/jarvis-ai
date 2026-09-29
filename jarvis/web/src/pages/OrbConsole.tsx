@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import {
   Mic, Square, Send, Cpu, MapPin, FolderGit2, Cloud,
   Activity, Clock, Radio, Plus, Minus,
+  Terminal, Wrench, FileText, Pencil, Globe, Search, ListTodo,
+  type LucideIcon,
 } from 'lucide-react'
-import { useJarvisStore, modelLabel } from '@/store/jarvisStore'
+import { useJarvisStore, modelLabel, type ToolCall } from '@/store/jarvisStore'
 import { useMic } from '@/hooks/useMic'
 import { cn } from '@/lib/utils'
 import { OrbCanvas } from '@/components/OrbCanvas'
@@ -273,43 +275,104 @@ function ProjectContextWidget({ onClick }: { onClick?: () => void }) {
   )
 }
 
-function ActivityWidget() {
-  const [items, setItems] = useState<{ time: number; text: string }[]>([])
-  useEffect(() => {
-    // Pull from /api/history or maintain a rolling list as turns complete
-    let alive = true
-    const fetchHistory = async () => {
-      try {
-        const r = await fetch('/api/history')
-        const data = await r.json()
-        if (!alive || !data?.messages) return
-        const turns = data.messages
-          .filter((m: { role: string }) => m.role === 'user')
-          .slice(-5)
-          .map((m: { content: string; ts?: number }) => ({
-            time: Date.now() - Math.random() * 60000,
-            text: (m.content || '').slice(0, 60),
-          }))
-        setItems(turns)
-      } catch { /* noop */ }
-    }
-    fetchHistory()
-    const i = setInterval(fetchHistory, 8000)
-    return () => { alive = false; clearInterval(i) }
-  }, [])
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  terminal: Terminal, bash: Terminal, shell: Terminal, run_terminal_command: Terminal,
+  read: FileText, glob: FileText, grep: Search, search: Search,
+  edit: Pencil, write: Pencil, create: Pencil, str_replace_editor: Pencil,
+  web_search: Globe, web_fetch: Globe, fetch: Globe, browser: Globe,
+  todo: ListTodo, task: ListTodo,
+}
+
+function toolIcon(name: string): LucideIcon {
+  return TOOL_ICONS[name.toLowerCase()] || Wrench
+}
+
+function argsPreview(args: unknown): string {
+  if (args == null) return ''
+  if (typeof args === 'string') return args
+  if (typeof args === 'object') {
+    const o = args as Record<string, unknown>
+    const v = o.command ?? o.cmd ?? o.path ?? o.pattern ?? o.url ?? o.query ?? o.description ?? o.name
+    if (typeof v === 'string') return v
+    try { return JSON.stringify(args) } catch { return '' }
+  }
+  return String(args)
+}
+
+function statusColor(status: ToolCall['status']): string {
+  if (status === 'error') return 'bg-[var(--red)]'
+  if (status === 'done') return 'bg-[var(--green)]'
+  return 'bg-[var(--amber)] animate-pulse'
+}
+
+/** One floating action card: what Cosmo is doing right now. */
+function ActionCard({ tc }: { tc: ToolCall }) {
+  const Icon = toolIcon(tc.name)
+  const elapsed = tc.elapsedMs != null ? `${(tc.elapsedMs / 1000).toFixed(1)}s` : tc.status === 'running' ? '…' : ''
   return (
-    <div className="pointer-events-none rounded-xl border border-[var(--line-bright)] bg-black/35 px-3.5 py-2 font-mono backdrop-blur-md">
+    <div className="pointer-events-auto flex w-[260px] items-center gap-2.5 rounded-md border border-[var(--line-bright)] bg-black/70 px-2.5 py-2 font-mono backdrop-blur-md animate-[slide-in-right_0.18s_ease-out]">
+      <Icon size={13} className={tc.status === 'error' ? 'shrink-0 text-[var(--red)]' : 'shrink-0 text-[var(--blue)]'} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="truncate text-[10.5px] tracking-wide text-[var(--text)]">{tc.name}</span>
+          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusColor(tc.status))} />
+          <span className="ml-auto shrink-0 text-[9.5px] tabular-nums text-[var(--text-faint)]">{elapsed}</span>
+        </div>
+        <div className="truncate text-[9.5px] text-[var(--text-faint)]">{argsPreview(tc.args)}</div>
+      </div>
+      {tc.screenshot && (
+        <img
+          src={`data:image/jpeg;base64,${tc.screenshot}`}
+          alt=""
+          className="h-8 w-12 shrink-0 rounded-sm border border-[var(--line)] object-cover"
+        />
+      )}
+    </div>
+  )
+}
+
+/** Floating stack of current-turn action cards (left-bottom, above TaskOrb). */
+function ActionCards() {
+  const toolCalls = useJarvisStore((s) => s.toolCalls)
+  const cards = toolCalls.slice(-4)
+  if (!cards.length) return null
+  return (
+    <div className="flex flex-col gap-1.5">
+      {cards.map((tc) => <ActionCard key={tc.id} tc={tc} />)}
+    </div>
+  )
+}
+
+/** Right rail: rolling session activity with status, timing, screenshots. */
+function ActivityRail() {
+  const activityLog = useJarvisStore((s) => s.activityLog)
+  const turnActive = useJarvisStore((s) => s.turnActive)
+  const rows = activityLog.slice(-6).reverse()
+  return (
+    <div className="pointer-events-auto rounded-xl border border-[var(--line-bright)] bg-black/35 px-3.5 py-2 font-mono backdrop-blur-md">
       <div className="flex items-center gap-2 text-[9.5px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
         <Activity size={11} />
-        recent
+        activity
+        {turnActive && <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--amber)]" />}
       </div>
-      <ul className="mt-1 space-y-0.5 text-[10px]">
-        {items.length === 0 && (
-          <li className="text-[var(--text-faint)]">no turns yet</li>
+      <ul className="mt-1 max-h-[210px] space-y-1 overflow-y-auto">
+        {rows.length === 0 && (
+          <li className="text-[10px] text-[var(--text-faint)]">no actions yet</li>
         )}
-        {items.slice(0, 4).map((it, i) => (
-          <li key={i} className="truncate text-[var(--text-dim)]">
-            <span className="text-[var(--text-faint)]">·</span> {it.text || '…'}
+        {rows.map((tc) => (
+          <li key={tc.id} className="flex items-center gap-1.5 text-[10px]">
+            <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusColor(tc.status))} />
+            <span className="truncate text-[var(--text-dim)]">{tc.name}</span>
+            <span className="ml-auto shrink-0 tabular-nums text-[var(--text-faint)]">
+              {tc.elapsedMs != null ? `${(tc.elapsedMs / 1000).toFixed(1)}s` : '…'}
+            </span>
+            {tc.screenshot && (
+              <img
+                src={`data:image/jpeg;base64,${tc.screenshot}`}
+                alt=""
+                className="h-5 w-8 shrink-0 rounded-sm border border-[var(--line)] object-cover"
+              />
+            )}
           </li>
         ))}
       </ul>
@@ -348,6 +411,7 @@ export function OrbConsole() {
   const sendText = useJarvisStore((s) => s.sendText)
   const stop = useJarvisStore((s) => s.stop)
   const task = useJarvisStore((s) => s.task)
+  const toolCalls = useJarvisStore((s) => s.toolCalls)
 
   const { recording, start, stop: micStop } = useMic()
   const [text, setText] = useState('')
@@ -417,14 +481,10 @@ export function OrbConsole() {
         <ErrorBoundary compact label="system"><SystemStatsWidget /></ErrorBoundary>
       </div>
 
-      {/* Upper-right rail: weather */}
-      <div className="absolute right-5 top-20 z-10 hidden flex-col gap-2.5 md:flex">
+      {/* Upper-right rail: weather + live activity feed */}
+      <div className="absolute right-5 top-20 z-10 hidden w-[220px] flex-col gap-2.5 md:flex">
         <ErrorBoundary compact label="weather"><WeatherWidget /></ErrorBoundary>
-      </div>
-
-      {/* Lower-left: activity feed */}
-      <div className="absolute left-5 top-[60%] z-10 hidden w-[220px] -translate-y-1/2 lg:block">
-        <ErrorBoundary compact label="activity"><ActivityWidget /></ErrorBoundary>
+        <ErrorBoundary compact label="activity"><ActivityRail /></ErrorBoundary>
       </div>
 
       {/* Radial menu (right-center) — opens panels */}
@@ -432,10 +492,11 @@ export function OrbConsole() {
         <RadialMenu panels={panels} />
       </div>
 
-      {/* Task panel (left-center, mid-low) */}
-      {task && (
-        <div className="pointer-events-none absolute left-5 bottom-32 z-10">
-          <ErrorBoundary compact label="task"><TaskOrb plan={task} /></ErrorBoundary>
+      {/* Left-bottom stack: current-turn action cards above the task plan */}
+      {(task || toolCalls.length > 0) && (
+        <div className="pointer-events-none absolute bottom-32 left-5 z-10 flex w-[270px] flex-col gap-2.5">
+          <ErrorBoundary compact label="actions"><ActionCards /></ErrorBoundary>
+          {task && <ErrorBoundary compact label="task"><TaskOrb plan={task} /></ErrorBoundary>}
         </div>
       )}
 
