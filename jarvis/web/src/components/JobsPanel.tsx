@@ -99,31 +99,43 @@ function JobsPanel() {
   }
 
   const toggleReminder = async (job: ReminderJob) => {
-    const data = await api(`/api/scheduler/${job.id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ enabled: !job.enabled }),
-    })
-    if (!data.ok) pushToast(data.error || 'toggle failed', 'err')
-    await refresh()
+    try {
+      const data = await api(`/api/scheduler/${job.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: !job.enabled }),
+      })
+      if (!data.ok) pushToast(data.error || 'toggle failed', 'err')
+      await refresh()
+    } catch (e) {
+      pushToast((e as Error).message, 'err')
+    }
   }
 
   const deleteReminder = async (job: ReminderJob) => {
-    const data = await api(`/api/scheduler/${job.id}`, { method: 'DELETE' })
-    if (!data.ok) pushToast(data.error || 'delete failed', 'err')
-    else pushToast('reminder removed', 'ok')
-    await refresh()
+    try {
+      const data = await api(`/api/scheduler/${job.id}`, { method: 'DELETE' })
+      if (!data.ok) pushToast(data.error || 'delete failed', 'err')
+      else pushToast('reminder removed', 'ok')
+      await refresh()
+    } catch (e) {
+      pushToast((e as Error).message, 'err')
+    }
   }
 
   const hermesAction = async (job: HermesJob, action: 'pause' | 'resume' | 'run' | 'delete') => {
     const id = job.id ?? job.job_id
     if (!id) return
-    const data =
-      action === 'delete'
-        ? await api(`/api/hermes/jobs/${id}`, { method: 'DELETE' })
-        : await api(`/api/hermes/jobs/${id}/${action}`, { method: 'POST' })
-    if (!data.ok) pushToast(data.error || `${action} failed`, 'err')
-    else pushToast(`job ${action}d`.replace('rund', 'run'), 'ok')
-    await refresh()
+    try {
+      const data =
+        action === 'delete'
+          ? await api(`/api/hermes/jobs/${id}`, { method: 'DELETE' })
+          : await api(`/api/hermes/jobs/${id}/${action}`, { method: 'POST' })
+      if (!data.ok) pushToast(data.error || `${action} failed`, 'err')
+      else pushToast(action === 'run' ? 'job run' : `job ${action}d`, 'ok')
+      await refresh()
+    } catch (e) {
+      pushToast((e as Error).message, 'err')
+    }
   }
 
   return (
