@@ -229,7 +229,7 @@ async def stop_run() -> bool:
         profile = _active_run_profile
     if not run_id:
         return False
-    url = f"{HERMES_URL}/v1/runs/{run_id}/stop"
+    url = f"{_profile_url(profile)}/v1/runs/{run_id}/stop"
     # Authenticate with the key of the profile that started the run: using
     # _KEYS['default'] 401'd whenever the active run belonged to any other
     # profile (wwf, custom projects), silently breaking STOP there.
@@ -427,7 +427,7 @@ async def stream_chat(
     key = _profile_key(profile)
     if not key:
         await on_event({"type": "error", "message": f"Hermes API key missing for profile '{profile}'"})
-        return {"messages": messages, "final_text": ""}
+        return {"messages": messages, "final_text": "", "errored": True}
 
     # Split: last user message = input, everything before = history.
     # System messages are NOT sent as history: Hermes enforces strict role
@@ -458,7 +458,7 @@ async def stream_chat(
 
     if not user_message:
         await on_event({"type": "error", "message": "No user message to send"})
-        return {"messages": messages, "final_text": ""}
+        return {"messages": messages, "final_text": "", "errored": True}
 
     base = _profile_url(profile)
     headers = {
@@ -469,8 +469,7 @@ async def stream_chat(
     timeout = aiohttp.ClientTimeout(total=1800, connect=15)
     started = time.time()
     final_text = ""
-    tool_ids: dict[str, int] = {}
-    tool_elapsed: dict[str, float] = {}
+    tool_inflight: dict[str, list[tuple[str, float]]] = {}
     todo_tracker = TodoTracker()
 
     try:
@@ -499,7 +498,7 @@ async def stream_chat(
                 if resp.status >= 400:
                     text = await resp.text()
                     await on_event({"type": "error", "message": f"Hermes turn failed ({resp.status}): {text[:300]}"})
-                    return {"messages": messages, "final_text": ""}
+                    return {"messages": messages, "final_text": "", "errored": True}
 
                 async for event_name, payload in _parse_sse(resp):
                     if event_name == "run.started":
@@ -521,12 +520,14 @@ async def stream_chat(
                     elif event_name == "tool.started":
                         name = payload.get("tool_name") or "tool"
                         args = payload.get("args")
-                        n = tool_ids.get(name, 0) + 1
-                        tool_ids[name] = n
-                        tool_elapsed[name] = time.time()
+                        # Unique per call (name + ms timestamp): the UI keeps
+                        # activity rows across turns, so name-counter ids would
+                        # collide and stale rows would get updated by mistake.
+                        tid = f"{name}-{int(time.time() * 1000)}"
+                        tool_inflight.setdefault(name, []).append((tid, time.time()))
                         await on_event({
                             "type": "tool_call",
-                            "id": f"{name}-{n}",
+                            "id": tid,
                             "name": name,
                             "args": args or {},
                         })
@@ -536,12 +537,12 @@ async def stream_chat(
                                 await on_event({"type": "task_update", **snap})
                     elif event_name == "tool.completed":
                         name = payload.get("tool_name") or "tool"
-                        n = tool_ids.get(name, 1)
-                        started_at = tool_elapsed.get(name, time.time())
+                        queue = tool_inflight.get(name) or []
+                        tid, started_at = queue.pop(0) if queue else (f"{name}-{int(time.time() * 1000)}", time.time())
                         is_error = bool(payload.get("error"))
                         await on_event({
                             "type": "tool_result",
-                            "id": f"{name}-{n}",
+                            "id": tid,
                             "name": name,
                             "result": {"ok": not is_error, "error": is_error},
                             "elapsed_ms": round((time.time() - started_at) * 1000),
@@ -566,7 +567,7 @@ async def stream_chat(
     except aiohttp.ClientError as exc:
         log.exception("Hermes stream failed")
         await on_event({"type": "error", "message": f"Hermes connection failed: {exc}"})
-        return {"messages": messages, "final_text": ""}
+        return {"messages": messages, "final_text": "", "errored": True}
     finally:
         async with _active_run_lock:
             _active_run_id = None
@@ -575,9 +576,15 @@ async def stream_chat(
     elapsed = round(time.time() - started, 2)
     log.info("hermes turn done in %.2fs (profile=%s)", elapsed, profile)
 
-    # Update the local conversation with the final exchange.
-    updated = [m for m in messages if m.get("role") != "system"]
-    updated.append({"role": "user", "content": user_message})
+    # Update the local conversation with the final exchange. System messages
+    # stay in the list so the Cosmo persona + memory context survive across
+    # turns (the caller stores this list verbatim). The user message is
+    # normally already the last entry — only append it when missing so prior
+    # turns never get double-sent as history.
+    updated = list(messages)
+    last = updated[-1] if updated else None
+    if not (last and last.get("role") == "user" and last.get("content") == user_message):
+        updated.append({"role": "user", "content": user_message})
     if final_text:
         updated.append({"role": "assistant", "content": final_text})
     return {"messages": updated, "final_text": final_text}
