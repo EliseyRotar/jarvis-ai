@@ -213,7 +213,7 @@ function handleLlmEvent(ev: any) {
         startedAt: Date.now(),
       }
       set((s) => ({
-        toolCalls: [...s.toolCalls, entry],
+        toolCalls: [...s.toolCalls, entry].slice(-8),
         activityLog: [...s.activityLog, entry].slice(-24),
       }))
       break
@@ -304,7 +304,7 @@ function handleMessage(msg: any) {
       break
     case 'transcript':
       set((s) => ({
-        transcript: [...s.transcript, { id: genId(), text: msg.text, voice: !!msg.voice, time: Date.now() }],
+        transcript: [...s.transcript, { id: genId(), text: msg.text, voice: !!msg.voice, time: Date.now() }].slice(-200),
       }))
       break
     case 'turn_start':
@@ -318,18 +318,22 @@ function handleMessage(msg: any) {
         // floating action cards show the current turn only; the right-rail
         // activityLog keeps the session history (late screenshots still land there)
         toolCalls: [],
-        responseTurns: s.responseLive.trim() || s.responseTurns.length
-          ? [...s.responseTurns]
+        // archive any half-streamed answer from a barge-in before clearing
+        responseTurns: s.responseLive.trim()
+          ? [...s.responseTurns, { id: genId(), text: s.responseLive }].slice(-100)
           : s.responseTurns,
       }))
       break
     case 'turn_end': {
+      // Fast-path replies (voice intents, "are you online") arrive only in
+      // final_text — fall back to it when nothing was streamed live.
       const live = get().responseLive
+      const text = live.trim() || String(msg.final_text || '').trim()
       set((s) => ({
         reactor: 'DONE',
         turnActive: false,
         responseState: 'ready',
-        responseTurns: live.trim() ? [...s.responseTurns, { id: genId(), text: live }] : s.responseTurns,
+        responseTurns: text ? [...s.responseTurns, { id: genId(), text }].slice(-100) : s.responseTurns,
         responseLive: '',
       }))
       break
@@ -341,7 +345,7 @@ function handleMessage(msg: any) {
         turnActive: false,
         thinkLive: false,
         responseState: 'ready',
-        responseTurns: live2.trim() ? [...s.responseTurns, { id: genId(), text: live2 }] : s.responseTurns,
+        responseTurns: live2.trim() ? [...s.responseTurns, { id: genId(), text: live2 }].slice(-100) : s.responseTurns,
         responseLive: '',
         speaking: false,
       }))
