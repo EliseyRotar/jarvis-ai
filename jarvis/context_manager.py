@@ -50,6 +50,14 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
     "mistral": 32_000,
     "gemma2": 8_000,
     "phi3": 4_000,
+    # Google AI Studio / Gemini free tier (1M-token context on Flash)
+    "gemini-3.8-flash": 1_000_000,
+    "gemini-3.7-flash": 1_000_000,
+    "gemini-3.6-flash": 1_000_000,
+    "gemini-3.5-flash": 1_000_000,
+    "gemini-flash-latest": 1_000_000,
+    "gemini-flash-lite-latest": 1_000_000,
+    "gemini-3.1-flash-lite": 1_000_000,
 }
 
 DEFAULT_CONTEXT_LIMIT = 32_000
