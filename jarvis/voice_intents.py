@@ -36,6 +36,27 @@ INTENT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         r"\bswitch\s+to\s+(?:project\s+|profile\s+|mode\s+)?(?P<name>[a-z0-9][a-z0-9_-]{0,31})\b",
         re.IGNORECASE),
      "switch_mode"),
+    # Reminders — straight to the scheduler, zero LLM. "SPEAK:" makes the
+    # fire-time path say the reminder aloud without needing the model.
+    (re.compile(
+        r"\bremind\s+me\s+in\s+(?P<n>\d{1,3})\s*(?P<unit>minutes?|mins?|hours?|hrs?)"
+        r"\s+(?:to\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_in"),
+    (re.compile(
+        r"\bremind\s+me\s+(?:at|around)\s+(?P<time>\d{1,2}:\d{2})\s+(?:to\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_at"),
+    (re.compile(
+        r"\bricordami\s+tra\s+(?P<n>\d{1,3})\s*(?P<unit>minuti?|ore?)"
+        r"\s+(?:di\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_in"),
+    (re.compile(
+        r"\b(?:напомни|напомнить)\s+(?:мне\s+)?через\s+(?P<n>\d{1,3})\s*"
+        r"(?P<unit>минут|мин|часа|часов|час)\s*(?:мне\s+)?(?P<what>[^.;!?]{3,140})",
+        re.IGNORECASE),
+     "remind_me_in"),
 ]
 
 
@@ -110,6 +131,51 @@ async def handle_voice_intent(
                         "message": (f"Opening project wizard for '{name}'. "
                                     "Pick the working directory and continue.")})
         log.info("voice-intent create_project: name=%s", name)
+        return True
+
+    if intent in ("remind_me_in", "remind_me_at"):
+        from datetime import datetime, timedelta
+
+        from .tools import scheduler
+
+        what = (groups.get("what") or "").strip()
+        if not what:
+            return False
+        if intent == "remind_me_in":
+            n = int(groups.get("n") or 0)
+            unit = (groups.get("unit") or "minutes").lower()
+            delta = timedelta(hours=n) if unit.startswith(("hour", "hr", "ore", "ora", "час")) \
+                else timedelta(minutes=n)
+            if n <= 0:
+                return False
+            fire_at = datetime.now() + delta
+        else:  # remind_me_at HH:MM — next occurrence of that clock time
+            try:
+                hh, mm = (int(x) for x in (groups.get("time") or "").split(":"))
+                if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                    raise ValueError
+            except ValueError:
+                return False
+            fire_at = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if fire_at <= datetime.now():
+                fire_at += timedelta(days=1)
+
+        # SPEAK: prefix -> the scheduler says it aloud at fire time, no LLM.
+        result = scheduler.add(
+            name=f"reminder-{fire_at.strftime('%H%M')}",
+            prompt=f"SPEAK: Reminder: {what}",
+            kind="once",
+            spec=fire_at.isoformat(timespec="seconds"),
+        )
+        if not result.get("ok"):
+            if send:
+                await send({"type": "toast", "kind": "err",
+                            "message": f"Reminder failed: {result.get('error')}"})
+            return True
+        if send:
+            await send({"type": "toast", "kind": "ok",
+                        "message": f"Reminder set for {fire_at.strftime('%H:%M')}: {what[:60]}"})
+        log.info("voice-intent remind: fire_at=%s what=%r", fire_at.isoformat(), what)
         return True
 
     return False

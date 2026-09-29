@@ -1922,6 +1922,18 @@ async def _on_startup() -> None:
     # Scheduler: fire saved prompts on their schedule, streaming to the HUD.
     async def _fire_scheduled(prompt: str) -> None:
         log.info("scheduler firing job: %r", prompt[:60])
+        if prompt.startswith("SPEAK:"):
+            text = prompt[len("SPEAK:"):].strip()
+            await hub.broadcast({"type": "transcript", "text": text, "voice": False})
+            await hub.broadcast({"type": "turn_start", "voice": False})
+            await hub.broadcast({"type": "turn_end", "final_text": text, "elapsed": 0.0})
+            await hub.broadcast({"type": "speaking", "state": "start"})
+            try:
+                await tts.speak(text, lang=_detect_text_language(text))
+            except Exception as exc:
+                log.error("scheduled SPEAK failed: %s", exc)
+            await hub.broadcast({"type": "speaking", "state": "end"})
+            return
         await handle_user_turn(prompt, voice=False, send=hub.broadcast)
 
     try:
