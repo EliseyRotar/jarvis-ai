@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus,
+  FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus, AlarmClock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -15,6 +15,7 @@ export interface RadialPanel {
 const ICONS: Record<string, typeof FolderGit2> = {
   projects: FolderGit2,
   tasks: ListChecks,
+  jobs: AlarmClock,
   brain: Brain,
   activity: Activity,
   settings: Settings,

@@ -7,6 +7,7 @@ import { initPersonaEarly } from '@/lib/cosmo'
 import '@/components/ProjectsPanel'
 import '@/components/SubagentsPanel'
 import '@/components/TasksPanel'
+import '@/components/JobsPanel'
 import '@/components/LogsPanel'
 import '@/components/SettingsPanel'
 
