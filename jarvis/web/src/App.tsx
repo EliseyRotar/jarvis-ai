@@ -8,6 +8,8 @@ import '@/components/ProjectsPanel'
 import '@/components/SubagentsPanel'
 import '@/components/TasksPanel'
 import '@/components/JobsPanel'
+import '@/components/SkillsPanel'
+import '@/components/HistoryPanel'
 import '@/components/LogsPanel'
 import '@/components/SettingsPanel'
 

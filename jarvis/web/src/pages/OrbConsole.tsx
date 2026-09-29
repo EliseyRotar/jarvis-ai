@@ -445,6 +445,8 @@ export function OrbConsole() {
     { id: 'projects', label: 'projects', icon: 'projects' },
     { id: 'tasks', label: 'tasks', icon: 'tasks' },
     { id: 'jobs', label: 'jobs', icon: 'jobs' },
+    { id: 'skills', label: 'skills', icon: 'skills' },
+    { id: 'history', label: 'history', icon: 'history' },
     { id: 'subagents', label: 'subagents', icon: 'brain' },
     { id: 'logs', label: 'logs', icon: 'activity' },
     { id: 'settings', label: 'settings', icon: 'settings' },

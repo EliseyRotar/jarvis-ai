@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus, AlarmClock,
+  FolderGit2, ListChecks, Brain, Activity, Settings, X, Plus, AlarmClock, BookOpen, History,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ErrorBoundary } from './ErrorBoundary'
@@ -16,6 +16,8 @@ const ICONS: Record<string, typeof FolderGit2> = {
   projects: FolderGit2,
   tasks: ListChecks,
   jobs: AlarmClock,
+  skills: BookOpen,
+  history: History,
   brain: Brain,
   activity: Activity,
   settings: Settings,
