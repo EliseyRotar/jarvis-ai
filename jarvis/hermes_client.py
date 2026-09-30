@@ -676,6 +676,12 @@ async def stream_chat(
                     elif event_name == "run.completed":
                         if not final_text:
                             final_text = _extract_final_text(payload)
+                        # Forward the authoritative per-turn transcript so the
+                        # activity UI can attach full tool outputs (the live
+                        # tool.completed events carry no result text).
+                        turn_msgs = payload.get("messages")
+                        if isinstance(turn_msgs, list) and turn_msgs:
+                            await on_event({"type": "run_completed", "messages": turn_msgs})
                     elif event_name == "error":
                         await on_event({"type": "error", "message": payload.get("message", "Hermes error")})
                     elif event_name == "done":

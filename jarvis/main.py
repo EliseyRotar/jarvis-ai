@@ -88,6 +88,19 @@ _MAX_HISTORY = 200  # user/assistant messages to persist across reboots
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     """Startup/shutdown lifecycle. Startup logic lives in ``_on_startup``."""
+    # The mounted memory-MCP Starlette app's own lifespan never runs (Starlette
+    # does not propagate lifespan scopes into mounts), so start its session
+    # manager task group here — without it every /mcp request 500s with
+    # "Task group is not initialized".
+    _mem_cm = None
+    try:
+        from .mcp_memory import mcp as _memory_mcp
+
+        _mem_cm = _memory_mcp.session_manager.run()
+        await _mem_cm.__aenter__()
+    except Exception as exc:
+        log.warning("memory MCP session manager failed to start: %s", exc)
+        _mem_cm = None
     await _on_startup()
     try:
         yield
@@ -96,6 +109,11 @@ async def lifespan(app: "FastAPI"):
         # (Ctrl+C, systemd/service stop, reboot signal) — not just the
         # explicit /api/shutdown endpoint — so the next launch resumes here.
         _save_history()
+        if _mem_cm is not None:
+            try:
+                await _mem_cm.__aexit__(None, None, None)
+            except Exception as exc:
+                log.warning("memory MCP session manager shutdown failed: %s", exc)
 
 
 app = FastAPI(title="JARVIS", version="1.0", lifespan=lifespan)
@@ -243,6 +261,7 @@ _ACTION_PHRASES = {
     "schedule_add": "Scheduled.",
     "schedule_cancel": "Schedule cancelled.",
     "memory_save": "Noted.",
+    "memory_add": "Noted.",
 }
 # Substrings that indicate a state-changing action (covers MCP/Home-Assistant
 # tools whose exact names vary, e.g. light.turn_on, switch.toggle).
@@ -266,10 +285,11 @@ def _action_ack_phrase(name: str) -> str | None:
 
 
 def _memory_context_block(limit: int = 8) -> str:
-    """Read the most-recently-updated memory entries directly (no tool round trip)."""
+    """Read recent durable facts from the mem0 brain (no tool round trip)."""
     try:
-        from .tools import memory
-        entries = memory.recent_sync(limit)
+        from . import memory_store
+
+        entries = memory_store.recent_facts(limit)
     except Exception as exc:
         log.debug("memory context load failed: %s", exc)
         return ""
@@ -277,11 +297,12 @@ def _memory_context_block(limit: int = 8) -> str:
         return ""
     lines = []
     for e in entries:
-        value = e.get("value")
-        if not isinstance(value, str):
-            value = json.dumps(value, ensure_ascii=False)
-        lines.append(f"- {e.get('key')}: {value}")
-    return "\n\nKNOWN CONTEXT FROM MEMORY (already loaded, do not call memory_recall again for this):\n" + "\n".join(lines)
+        text = str(e.get("text") or "").strip()
+        if text:
+            lines.append(f"- {text}")
+    if not lines:
+        return ""
+    return "\n\nKNOWN CONTEXT FROM LONG-TERM MEMORY (already loaded, do not call memory_search for it):\n" + "\n".join(lines)
 
 
 def _load_system_prompt() -> str:
@@ -606,6 +627,16 @@ async def handle_user_turn(text: str, *, voice: bool, send: Any,
         "elapsed": elapsed,
     }, send)
 
+    # Feed this exchange to the long-term memory brain. Fact extraction runs
+    # in the background with the local Ollama LLM — never blocks the turn.
+    if final_text:
+        try:
+            from . import memory_store
+
+            _create_task(memory_store.ingest_turn(user_message, final_text))
+        except Exception as exc:
+            log.debug("memory ingest scheduling failed: %s", exc)
+
     # Speak any remaining buffer fragment not yet queued
     remainder = tts.strip_for_tts(_tts_buf).strip()
     if remainder and len(remainder) >= 4:
@@ -806,34 +837,43 @@ async def api_stop() -> dict[str, Any]:
 
 
 @app.get("/api/memory")
-async def api_memory(limit: int = 200) -> dict[str, Any]:
-    """Read-only browse of long-term memory (~/.jarvis/memory.db)."""
-    from .tools import memory
+async def api_memory(limit: int = 200, q: str = "") -> dict[str, Any]:
+    """Browse or search the single mem0 memory brain (~/.jarvis/mem0_qdrant)."""
+    from . import memory_store
 
-    return await memory.list_memories(limit=limit)
+    if q.strip():
+        return await memory_store.search(q, limit=max(1, min(limit, 50)))
+    return await memory_store.list_memories(limit=max(1, min(limit, 500)))
 
 
 @app.post("/api/memory")
 async def api_memory_save(body: dict[str, Any]) -> dict[str, Any]:
-    """Create or update a long-term memory entry."""
-    from .tools import memory
+    """Store a fact verbatim in long-term memory."""
+    from . import memory_store
 
-    key = str(body.get("key", "")).strip()
-    value = body.get("value")
+    text = str(body.get("text") or body.get("value") or "").strip()
     tags = body.get("tags") or []
-    if not key:
-        return {"ok": False, "error": "key is required"}
-    await memory.save(key, value, tags)
-    return {"ok": True}
+    if not text:
+        return {"ok": False, "error": "text is required"}
+    return await memory_store.add_fact(text, tags if isinstance(tags, list) else [])
 
 
-@app.delete("/api/memory/{key}")
-async def api_memory_delete(key: str) -> dict[str, Any]:
-    """Delete a long-term memory entry by key."""
-    from .tools import memory
+@app.delete("/api/memory/{memory_id}")
+async def api_memory_delete(memory_id: str) -> dict[str, Any]:
+    """Delete a memory by its id."""
+    from . import memory_store
 
-    await memory.delete(key)
-    return {"ok": True}
+    return await memory_store.delete(memory_id)
+
+
+@app.get("/api/memory/graph")
+async def api_memory_graph(limit: int = 250) -> dict[str, Any]:
+    """Connected-memory graph: nodes = memories, edges = cosine similarity."""
+    import asyncio
+
+    from . import memory_store
+
+    return await asyncio.to_thread(memory_store.graph, max(10, min(limit, 500)))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -1980,3 +2020,16 @@ async def _on_startup() -> None:
             log.info("telegram channel loop started")
     except Exception as exc:
         log.warning("telegram channel failed to start: %s", exc)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Memory MCP bridge — Cosmo's memory tools (memory_search/add/list/delete)
+# served over Streamable HTTP. Mounted last so every /api route above keeps
+# priority; unmatched paths fall through to /mcp.
+# ──────────────────────────────────────────────────────────────────────────
+try:
+    from .mcp_memory import mcp as _memory_mcp
+
+    app.mount("/", _memory_mcp.streamable_http_app())
+    log.info("memory MCP bridge mounted at /mcp")
+except Exception as exc:
+    log.warning("memory MCP bridge failed to mount: %s", exc)

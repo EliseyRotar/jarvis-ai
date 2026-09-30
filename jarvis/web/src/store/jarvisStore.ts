@@ -5,6 +5,8 @@ export type ToolCall = {
   name: string
   args: unknown
   result?: unknown
+  /** Full tool output — attached when run_completed delivers the turn transcript */
+  output?: string
   elapsedMs?: number
   status: 'running' | 'done' | 'error'
   startedAt: number
@@ -72,6 +74,9 @@ interface JarvisState {
   toolCalls: ToolCall[]
   /** rolling session log of tool actions for the right rail (capped, survives turn_start) */
   activityLog: ToolCall[]
+  /** floating activity window: open = visible, dismissed = don't auto-reopen this turn */
+  activityOpen: boolean
+  activityDismissed: boolean
   task: TaskPlan | null
   taskHistory: TaskPlan[]
   lastTurnMeta: TurnMeta | null
@@ -92,6 +97,7 @@ interface JarvisState {
   setPersona: (p: 'cosmo') => void
   setMicLevel: (v: number) => void
   setListening: (v: boolean) => void
+  setActivityOpen: (open: boolean) => void
   pushToast: (message: string, kind?: string) => void
   dismissToast: (id: string) => void
 }
@@ -118,6 +124,8 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   transcript: [],
   toolCalls: [],
   activityLog: [],
+  activityOpen: false,
+  activityDismissed: false,
   task: null,
   taskHistory: [],
   lastTurnMeta: null,
@@ -158,6 +166,8 @@ export const useJarvisStore = create<JarvisState>((set, get) => ({
   },
   setMicLevel: (v) => set({ micLevel: v }),
   setListening: (v) => set((s) => ({ listening: v, micLevel: v ? s.micLevel : 0 })),
+  setActivityOpen: (open) =>
+    set({ activityOpen: open, activityDismissed: open ? false : true }),
   pushToast: (message, kind = 'info') => {
     const id = genId()
     set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }))
@@ -217,8 +227,11 @@ function handleLlmEvent(ev: any) {
         startedAt: Date.now(),
       }
       set((s) => ({
-        toolCalls: [...s.toolCalls, entry].slice(-8),
+        toolCalls: [...s.toolCalls, entry].slice(-48),
         activityLog: [...s.activityLog, entry].slice(-24),
+        // the pretty activity window pops itself up when work starts,
+        // unless the user closed it during this turn
+        activityOpen: s.activityOpen || !s.activityDismissed,
       }))
       break
     }
@@ -237,6 +250,79 @@ function handleLlmEvent(ev: any) {
     case 'turn_meta': {
       const { type: _type, ...meta } = ev
       set({ lastTurnMeta: meta })
+      break
+    }
+    case 'run_completed': {
+      // The turn transcript (assistant tool_calls + tool results) is the only
+      // place the gateway delivers FULL tool output — pair them FIFO per tool
+      // name (same pairing the backend uses) and attach to this turn's rows.
+      const msgs: any[] = Array.isArray(ev.messages) ? ev.messages : []
+      const nameById = new Map<string, string>()
+      for (const m of msgs) {
+        if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls) {
+            const id = tc?.id
+            const name = tc?.function?.name || tc?.name
+            if (id && name) nameById.set(String(id), String(name))
+          }
+        }
+      }
+      const queues = new Map<string, string[]>()
+      const push = (name: string, text: string) => {
+        const q = queues.get(name)
+        if (q) q.push(text)
+        else queues.set(name, [text])
+      }
+      const flatten = (c: unknown): string => {
+        if (typeof c === 'string') return c
+        if (Array.isArray(c)) {
+          return c
+            .map((p: any) =>
+              p && typeof p === 'object' && typeof p.text === 'string' ? p.text : '',
+            )
+            .filter(Boolean)
+            .join('\n')
+        }
+        if (c && typeof c === 'object') {
+          try {
+            return JSON.stringify(c, null, 2)
+          } catch {
+            return String(c)
+          }
+        }
+        return c == null ? '' : String(c)
+      }
+      for (const m of msgs) {
+        if (m?.role !== 'tool') continue
+        const name =
+          (typeof m.tool_name === 'string' && m.tool_name) ||
+          nameById.get(String(m.tool_call_id ?? '')) ||
+          'tool'
+        push(name, flatten(m.content))
+      }
+      const CAP = 20000
+      set((s) => {
+        // Pair FIFO per tool name against THIS turn's rows (toolCalls is
+        // cleared at turn_start), then reuse the id→output map so the same
+        // rows in activityLog get identical outputs (single queue pass).
+        const outById = new Map<string, string>()
+        for (const tc of s.toolCalls) {
+          const q = queues.get(tc.name)
+          if (q && q.length) {
+            const out = q.shift() as string
+            outById.set(
+              tc.id,
+              out.length > CAP ? out.slice(0, CAP) + '\n… [truncated]' : out,
+            )
+          }
+        }
+        const apply = (tc: ToolCall): ToolCall =>
+          outById.has(tc.id) ? { ...tc, output: outById.get(tc.id) } : tc
+        return {
+          toolCalls: s.toolCalls.map(apply),
+          activityLog: s.activityLog.map(apply),
+        }
+      })
       break
     }
     case 'error':
@@ -322,6 +408,8 @@ function handleMessage(msg: any) {
         // floating action cards show the current turn only; the right-rail
         // activityLog keeps the session history (late screenshots still land there)
         toolCalls: [],
+        // a fresh turn may pop the activity window again after a dismissal
+        activityDismissed: false,
         // archive any half-streamed answer from a barge-in before clearing
         responseTurns: s.responseLive.trim()
           ? [...s.responseTurns, { id: genId(), text: s.responseLive }].slice(-100)
@@ -395,6 +483,8 @@ function handleMessage(msg: any) {
         transcript: [],
         toolCalls: [],
         activityLog: [],
+        activityOpen: false,
+        activityDismissed: false,
         task: null,
       })
       break

@@ -12,6 +12,7 @@ import { OrbCanvas } from '@/components/OrbCanvas'
 import { TaskOrb } from '@/components/TaskOrb'
 import { RadialMenu, type RadialPanel } from '@/components/RadialMenu'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ActivityWindow } from '@/components/ActivityWindow'
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -347,14 +348,20 @@ function ActionCards() {
 function ActivityRail() {
   const activityLog = useJarvisStore((s) => s.activityLog)
   const turnActive = useJarvisStore((s) => s.turnActive)
+  const setActivityOpen = useJarvisStore((s) => s.setActivityOpen)
   const rows = activityLog.slice(-6).reverse()
   return (
     <div className="pointer-events-auto rounded-xl border border-[var(--line-bright)] bg-black/35 px-3.5 py-2 font-mono backdrop-blur-md">
-      <div className="flex items-center gap-2 text-[9.5px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
+      <button
+        type="button"
+        title="Open the full activity window"
+        onClick={() => setActivityOpen(true)}
+        className="flex w-full items-center gap-2 text-[9.5px] uppercase tracking-[0.18em] text-[var(--text-faint)] transition hover:text-[var(--text-dim)]"
+      >
         <Activity size={11} />
         activity
         {turnActive && <span className="ml-auto h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--amber)]" />}
-      </div>
+      </button>
       <ul className="mt-1 max-h-[210px] space-y-1 overflow-y-auto">
         {rows.length === 0 && (
           <li className="text-[10px] text-[var(--text-faint)]">no actions yet</li>
@@ -447,6 +454,7 @@ export function OrbConsole() {
     { id: 'jobs', label: 'jobs', icon: 'jobs' },
     { id: 'skills', label: 'skills', icon: 'skills' },
     { id: 'history', label: 'history', icon: 'history' },
+    { id: 'memory', label: 'memory', icon: 'memory' },
     { id: 'subagents', label: 'subagents', icon: 'brain' },
     { id: 'logs', label: 'logs', icon: 'activity' },
     { id: 'settings', label: 'settings', icon: 'settings' },
@@ -485,6 +493,10 @@ export function OrbConsole() {
 
       {/* Toast notifications (voice intents, model/mode switches, errors) */}
       <ErrorBoundary compact label="toasts"><ToastStack /></ErrorBoundary>
+
+      {/* Floating activity window — pops itself up when Cosmo starts working;
+          draggable, expandable per-action rows with full output */}
+      <ErrorBoundary compact label="activity-window"><ActivityWindow /></ErrorBoundary>
 
       {/* Upper-left rail: project + system stats (hidden on phones — the
           rails overlapped the orb below md) */}
